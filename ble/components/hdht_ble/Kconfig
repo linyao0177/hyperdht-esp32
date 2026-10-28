@@ -1,0 +1,7 @@
+menu "hdht BLE link"
+
+    config HDHT_BLE_TX_QUEUE
+        int "Bytes of outgoing data that can wait for notification buffers"
+        default 8192
+
+endmenu

@@ -87,6 +87,40 @@ The board stayed on the home router (consistent NAT); the Mac moved to an iPhone
 
 Random-port punching is probabilistic in hyperdht as well; through this carrier NAT it took 5–32 s and failed about 1 time in 8 when neither side was rate limited.
 
+### WiFi + HyperDHT + BLE on one C3 (2026-10-28, LAN testnet)
+
+Build with the BLE link (`ble/components/hdht_ble`, same key pair as the DHT server). The image is 1.28 MB; `sdkconfig.ble` switches to a larger app partition anyway:
+
+```bash
+rm -f sdkconfig && HDHT_BLE=1 idf.py build flash
+```
+
+ESP-IDF enables WiFi/BLE software coexistence automatically (one shared radio, time-sliced).
+
+**Heap**
+
+| Point | WiFi + DHT only | WiFi + DHT + BLE |
+|---|---|---|
+| Boot | 258.6 KB | 220.5 KB (the BT controller reserves ~38 KB at boot) |
+| After WiFi | 206 KB | 168 KB |
+| After NimBLE init + advertising | n/a | 98.9 KB |
+| After DHT bootstrap | 185 KB | 77.6 KB |
+| Lowest during a client connect | ~165 KB | 53.7 KB |
+| Lowest over the whole run | 163 KB | **50.7 KB** |
+
+**Performance** (same boot, A/B/C back to back)
+
+| Test | Alone (earlier builds) | Combined build, other side idle | Both at the same time |
+|---|---|---|---|
+| Board → JS server connect | 519–612 ms | 724–755 ms (BLE advertising only), 3/3 | n/a |
+| JS (firewalled) → board, holepunch | 335–468 ms | 446–610 ms, 5/5 | 410–629 ms, with 2 of 10 at ~7.5 s (a lost packet waits for a 1 s RPC retry cycle); 10/10 OK |
+| BLE echo throughput (norsp) | 10.1 KiB/s each way | 10.1 KiB/s | 8.2 KiB/s (−19%) |
+| BLE round trip, median | 60 ms | 61 ms | 89 ms |
+
+No crashes; the BLE streams (72 KB and 145 KB) were verified end to end; heap after the run was back at its start value. Takeaways:
+- It works, but **memory is the limit**: ~50 KB of headroom left with one DHT connection and one BLE connection at once. Running more connections, a bigger BLE queue, or lwIP IRAM optimisation would need cuts elsewhere (e.g. a smaller NimBLE config, or `CONFIG_BT_NIMBLE_MEM_ALLOC_MODE` tuning).
+- Radio sharing costs ~20–30% latency on both sides and occasional multi-second outliers on the DHT side while BLE is busy.
+
 ## Not covered yet
 
 - Mobile-style random NATs on the board's side cannot holepunch (see the hdht README).

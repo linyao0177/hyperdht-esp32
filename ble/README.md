@@ -16,6 +16,8 @@ A PoC for "same key, two paths": the device's Holepunch identity (the Ed25519 ke
 idf.py build flash
 ```
 
+The BLE code is the `components/hdht_ble` component, also used by `firmware/` (WiFi + HyperDHT + BLE).
+
 On the Mac, Bluetooth needs an app bundle that declares `NSBluetoothAlwaysUsageDescription`. Without it, macOS kills the process (TCC). Build the bundle once:
 
 ```bash
@@ -54,5 +56,5 @@ Its output goes to `/tmp/bleapp/ble-client.log`. The first run asks for Bluetoot
 
 - **Phone client**: iOS/Android could reuse the same JS SecretStream (e.g. in a React Native or Bare app) or a native Noise implementation.
 - **L2CAP connection-oriented channels** instead of GATT.
-- **Running BLE and WiFi + HyperDHT at the same time** on one C3: they share the radio, and NimBLE's 56 KB comes on top of the ~25 KB per DHT connection. This needs measuring.
+- Running BLE and WiFi + HyperDHT at the same time is measured in `firmware/README.md`: it works, with ~50 KB of heap left and ~20–30% slower links on both sides.
 - A **BLE ↔ HyperDHT bridge** (a mains-powered C3 forwarding a BLE device's stream to a remote peer, end-to-end encrypted).

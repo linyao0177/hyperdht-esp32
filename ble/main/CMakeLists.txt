@@ -1,5 +1,5 @@
 idf_component_register(
   SRCS "main.c"
   INCLUDE_DIRS "."
-  REQUIRES hdht bt nvs_flash esp_timer
+  REQUIRES hdht_ble nvs_flash
 )

@@ -16,6 +16,7 @@
 #include "sdkconfig.h"
 
 #include "hdht.h"
+#include "hdht_ble.h"
 
 static const char MESSAGE[] = "hello from esp32-c3";
 
@@ -217,6 +218,19 @@ app_main (void) {
     return;
   }
   printf("HDHT|wifi|heap=%u\n", (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT));
+
+#if CONFIG_BT_NIMBLE_ENABLED
+  // the BLE link uses the same key pair as the DHT server, so one key reaches the device both ways
+  {
+    uint8_t seed[32], pk[32], sk[64];
+    memset(seed, CONFIG_HDHT_SERVER_SEED_BYTE, sizeof(seed));
+    hdht_keypair(pk, sk, seed);
+    hdht_ble_start(pk, sk);
+    sodium_memzero(seed, sizeof(seed));
+    sodium_memzero(sk, sizeof(sk));
+    printf("HDHT|ble_started|heap=%u\n", (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT));
+  }
+#endif
 
   xTaskCreate(loop_task, "hdht", CONFIG_HDHT_TASK_STACK, NULL, 5, NULL);
 }
