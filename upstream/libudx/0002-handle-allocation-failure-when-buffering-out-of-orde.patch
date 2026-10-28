@@ -1,0 +1,55 @@
+From a965568e95d74b6aa5e0f941789cc703c6571fc4 Mon Sep 17 00:00:00 2001
+From: linyao01 <linyao01@gmail.com>
+Date: Wed, 28 Oct 2026 10:11:21 +0800
+Subject: [PATCH 2/2] handle allocation failure when buffering out-of-order
+ data
+
+process_data_packet() asserted on calloc() of a new sack block and wrote
+through the result of malloc() for the packet copy without a NULL check. On
+memory-constrained targets this crashes (or, with NDEBUG, writes through NULL)
+when an out-of-order packet arrives while the heap is exhausted.
+
+Drop the packet instead, removing the sack block if it was created for it, so
+the packet is not SACKed and the remote retransmits it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/udx.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/src/udx.c b/src/udx.c
+index f6f2cde..b4445e1 100644
+--- a/src/udx.c
++++ b/src/udx.c
+@@ -1471,9 +1471,12 @@ process_data_packet (udx_stream_t *stream, int type, uint32_t seq, char *data, s
+     return;
+   }
+ 
+-  if (block == NULL) {
++  bool new_block = block == NULL;
++
++  if (new_block) {
+     block = calloc(1, sizeof(udx_sack_block_t));
+-    assert(block != NULL);
++    // out of memory: drop the packet, the remote retransmits it
++    if (block == NULL) return;
+     block->start = seq;
+     block->end = seq;
+     udx__queue_init(&block->packet_queue);
+@@ -1481,6 +1484,13 @@ process_data_packet (udx_stream_t *stream, int type, uint32_t seq, char *data, s
+   }
+ 
+   udx_buf_t *pkt = malloc(sizeof(udx_buf_t) + data_len);
++  if (pkt == NULL) {
++    if (new_block) {
++      udx_sack_tree_remove(&stream->sack_tree, block);
++      free(block);
++    }
++    return;
++  }
+   memset(pkt, 0, sizeof(*pkt));
+   udx__queue_tail(&block->packet_queue, &pkt->queue);
+   block->end++;
+-- 
+2.49.0
+

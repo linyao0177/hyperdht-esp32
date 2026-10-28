@@ -1,0 +1,12 @@
+{
+  "name": "holepunch-c3-poc-host",
+  "private": true,
+  "description": "UDX echo peer for the ESP32-C3 PoC",
+  "scripts": {
+    "start": "node echo-server.js"
+  },
+  "dependencies": {
+    "hyperdht": "6.35.0",
+    "udx-native": "1.22.0"
+  }
+}

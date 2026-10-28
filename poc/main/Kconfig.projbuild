@@ -1,0 +1,48 @@
+menu "Holepunch PoC"
+
+    config POC_PEER_HOST
+        string "Echo peer IPv4 address"
+        default "192.168.31.89"
+        help
+            Address of the machine running host/echo-server.js.
+
+    config POC_PEER_PORT
+        int "Echo peer UDP port"
+        default 9000
+
+    config POC_LOCAL_PORT
+        int "Local UDP port"
+        default 9001
+
+    config POC_ECHO_BYTES
+        int "Bytes to send per echo run"
+        default 262144
+
+    config POC_CHUNK_BYTES
+        int "Bytes per udx_stream_write"
+        default 1024
+
+    config POC_MAX_INFLIGHT_WRITES
+        int "Unacked writes allowed in flight"
+        default 16
+
+    config POC_RWND_LIST
+        string "Receive windows to test (bytes, comma separated, 0 = libudx default 4 MB)"
+        default "16384,65536,0"
+
+    config POC_HEAP_LEAVE_FREE
+        int "Squeeze free heap to this many bytes before each echo run (0 = off)"
+        default 0
+        help
+            Allocates ballast blocks before each run so the stack is tested
+            under memory pressure, then frees them afterwards.
+
+    config POC_BLAKE2B_IRAM
+        bool "Place libsodium's BLAKE2b compression function in IRAM"
+        default n
+        help
+            blake2b_compress_ref is ~21 KB of unrolled code, larger than the
+            16 KB instruction cache, so it thrashes when run from flash.
+            Placing it in IRAM costs the same amount of internal RAM.
+
+endmenu

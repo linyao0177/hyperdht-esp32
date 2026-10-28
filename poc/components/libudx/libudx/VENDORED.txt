@@ -1,0 +1,13 @@
+holepunchto/libudx 9c9a0e745124a06036fcb480a601e0a0069c4ce4 (2026-10-20). io_win.c removed; io_posix.c is not compiled (see ../port/io_esp.c).
+
+Local patches to src/udx.c (both are upstream bugs, found under memory pressure on ESP32-C3):
+
+1. RTO path: check `pkt->ref_count == 2` before `mtu_unprobeify_packet()`.
+   An MTU probe whose send is queued (uv_udp_try_send returned EAGAIN) had
+   header[3] cleared while the queued send still carried the padding, so the
+   remote read the zero padding as stream data. The RACK path already checks
+   ref_count first.
+
+2. process_data_packet slow path: handle calloc/malloc returning NULL for the
+   out-of-order sack block and packet copy (dropped; the remote retransmits)
+   instead of asserting / writing through NULL.

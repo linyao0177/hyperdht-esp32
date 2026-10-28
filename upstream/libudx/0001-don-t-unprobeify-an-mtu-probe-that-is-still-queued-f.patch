@@ -1,0 +1,46 @@
+From 4276cf5ab411b50e158ed8f4354bed73bf6f723d Mon Sep 17 00:00:00 2001
+From: linyao01 <linyao01@gmail.com>
+Date: Wed, 28 Oct 2026 10:11:21 +0800
+Subject: [PATCH 1/2] don't unprobeify an mtu probe that is still queued for
+ send on rto
+
+When uv_udp_try_send() returns UV_EAGAIN, _send_packet() queues the packet
+with uv_udp_send() and the buffer list it hands to libuv includes the probe
+padding derived from header[3] at that moment. If the RTO fires before the
+queued send completes, the RTO path called mtu_unprobeify_packet() before
+checking ref_count == 2, clearing header[3] in place. The queued datagram then
+goes out with header[3] == 0 but still carrying the padding bytes, so the
+remote reads the zero padding as stream data and the stream is corrupted.
+
+Check ref_count == 2 first, as the RACK loss path already does.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/udx.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/udx.c b/src/udx.c
+index 6c9daed..f6f2cde 100644
+--- a/src/udx.c
++++ b/src/udx.c
+@@ -1261,12 +1261,15 @@ udx_rto_timeout (uv_timer_t *timer) {
+     if (pkt->seq == stream->remote_acked || remaining < 0) {
+       stream->lost++;
+ 
++      // packet is already scheduled to transmit, so don't reschedule. Check
++      // before unprobeifying: the queued send still carries the probe padding,
++      // so clearing header[3] now would make the remote read padding as data.
++      if (pkt->ref_count == 2) continue;
++
+       if (pkt->is_mtu_probe) {
+         mtu_unprobeify_packet(pkt, stream);
+       }
+ 
+-      if (pkt->ref_count == 2) continue; // packet is already scheduled to transmit, so don't reschedule
+-
+       pkt->lost = true;
+       udx__queue_unlink(&stream->inflight_queue, &pkt->queue);
+       udx__queue_tail(&stream->retransmit_queue, &pkt->queue);
+-- 
+2.49.0
+

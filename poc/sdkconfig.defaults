@@ -1,0 +1,25 @@
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Measure with the optimisation a real build would use; keep assertions on so
+# shim bugs surface in libudx's asserts.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# 1 ms ticks: libudx paces with 1 ms timers and select() timeouts are tick based.
+CONFIG_FREERTOS_HZ=1000
+
+# Tasks used by the PoC get explicit stacks; keep main small.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+CONFIG_EXAMPLE_CONNECT_WIFI=y
+CONFIG_EXAMPLE_CONNECT_IPV6=n
+CONFIG_EXAMPLE_PROVIDE_WIFI_CONSOLE_CMD=n
+
+# lwIP's default of 6 queued datagrams per UDP socket drops the peer's bursts
+# while the loop is busy, costing ~20% retransmits and ~1 s of stalls per run.
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=32
+
+# Optional: ~2x faster sendmsg for ~33 KB less heap.
+# CONFIG_LWIP_IRAM_OPTIMIZATION=y
+# CONFIG_LWIP_EXTRA_IRAM_OPTIMIZATION=y

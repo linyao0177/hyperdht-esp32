@@ -1,0 +1,7 @@
+[mapping:poc_sodium_iram]
+archive: libespressif__libsodium.a
+entries:
+  if POC_BLAKE2B_IRAM = y:
+    blake2b-compress-ref (noflash)
+  else:
+    * (default)
