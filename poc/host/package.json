@@ -6,6 +6,7 @@
     "start": "node echo-server.js"
   },
   "dependencies": {
+    "@abandonware/noble": "1.9.2-26",
     "hyperdht": "6.35.0",
     "udx-native": "1.22.0"
   }

@@ -1,5 +1,6 @@
-// Noise IK handshake as used by HyperDHT: Noise_IK_Ed25519_ChaChaPoly_BLAKE2b
-// (noise-handshake + noise-curve-ed). See docs/PROTOCOL.md for the details
+// Noise handshakes as used by Holepunch: Noise_{IK,XX}_Ed25519_ChaChaPoly_BLAKE2b
+// (noise-handshake + noise-curve-ed). HyperDHT uses IK through the DHT;
+// SecretStream uses XX (or IK) in-band. See docs/PROTOCOL.md for the details
 // that differ from the Noise spec defaults (64-byte hash, Ed25519 DH).
 
 #ifndef HDHT_NOISE_H
@@ -13,7 +14,13 @@
 #define HDHT_NOISE_MSG1_OVERHEAD (32 + 48 + 16)
 #define HDHT_NOISE_MSG2_OVERHEAD (32 + 16)
 
+typedef enum {
+  HDHT_NOISE_IK,
+  HDHT_NOISE_XX,
+} hdht_noise_pattern_t;
+
 typedef struct {
+  hdht_noise_pattern_t pattern;
   uint8_t h[HDHT_NOISE_HASHLEN];
   uint8_t ck[HDHT_NOISE_HASHLEN];
   uint8_t k[32];
@@ -21,7 +28,7 @@ typedef struct {
   uint32_t nonce;
 
   bool initiator;
-  int step; // messages processed so far (0, 1, 2)
+  int step; // messages processed so far
   bool complete;
 
   uint8_t s_pk[32];
@@ -38,9 +45,18 @@ typedef struct {
   uint8_t hash[HDHT_NOISE_HASHLEN];
 } hdht_noise_t;
 
-// remote_static is required for the initiator and ignored for the responder.
+// IK with a 32-byte prologue (HyperDHT). remote_static is required for the
+// initiator and ignored for the responder.
 void
 hdht_noise_init (hdht_noise_t *n, bool initiator, const uint8_t s_pk[32], const uint8_t s_sk[64], const uint8_t *remote_static, const uint8_t prologue[32]);
+
+// Any supported pattern and prologue. For IK the initiator needs remote_static.
+void
+hdht_noise_init_pattern (hdht_noise_t *n, hdht_noise_pattern_t pattern, bool initiator, const uint8_t s_pk[32], const uint8_t s_sk[64], const uint8_t *remote_static, const uint8_t *prologue, size_t prologue_len);
+
+// Whether the next handshake message is ours to send.
+bool
+hdht_noise_my_turn (const hdht_noise_t *n);
 
 // For tests: use a fixed ephemeral key pair instead of a random one.
 void

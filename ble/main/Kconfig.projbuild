@@ -1,0 +1,11 @@
+menu "hdht BLE demo"
+
+    config HDHT_BLE_SEED_BYTE
+        hex "Seed byte for the key pair (0x33 = the same key the firmware/ app announces on the DHT)"
+        default 0x33
+
+    config HDHT_BLE_TX_QUEUE
+        int "Bytes of outgoing data that can wait for notification buffers"
+        default 8192
+
+endmenu

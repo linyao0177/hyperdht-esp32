@@ -12,6 +12,7 @@ The same code builds two ways:
 |---|---|
 | dht-rpc (requests, retries, relaying, routing table, iterative queries) | Done. Ephemeral, firewalled node only |
 | Noise IK (`Noise_IK_Ed25519_ChaChaPoly_BLAKE2b`) | Done, byte-exact against the JS vectors |
+| Noise XX, SecretStream over any byte stream (`secret_stream.c`: in-band handshake, framing, encryption) | Done; interop with the official module over TCP (XX and IK) and over BLE GATT (`ble/`) |
 | SecretStream over UDX (framing, secretstream, keepalive, graceful end) | Done. Unordered `send` messages not supported |
 | Client `connect(publicKey)`: FIND_PEER, relayed handshake, direct, OPEN, LAN shortcut, holepunch | Done |
 | Server `listen(keyPair)`: announce to the 3 closest nodes, 3 s relay pings, ~5 min re-announce, relayed handshakes, holepunch, unannounce on close | Done |
@@ -66,6 +67,7 @@ Then, against it:
 
 - `hdht/build/test_connect 127.0.0.1:49800 <key>` connects from C to the JS server (holepunch path).
 - `hdht/build/test_server 127.0.0.1:49800` announces a C server; `node poc/host/connect-board.js 127.0.0.1:49800 5 0x22` connects to it from JS.
+- `hdht/build/test_ss 7777 xx` is a SecretStream responder over TCP; `node poc/host/ss-client.js 7777 xx` runs the official module against it.
 
 ## Memory on the ESP32-C3
 

@@ -241,3 +241,14 @@ puncher addr}` to the client.
 - Responder side of the puncher answers every received `0x00` probe with a probe back; the stream is connected
   when the first UDX packet arrives (raw stream firewall hook) on any socket → `connect(socket, remote udx id,
   port, host)` and start SecretStream as responder.
+
+## SecretStream in-band handshake (lib/handshake.js)
+
+Used when there is no DHT handshake (e.g. over BLE or TCP).
+- `Noise(pattern, isInitiator, keyPair, {curve: noise-curve-ed})`, **empty prologue**, empty payloads.
+  Default pattern `XX` (`-> e`, `<- e, ee, s, es`, `-> s, se`); `IK` if the initiator passes
+  `remotePublicKey` and `pattern: 'IK'`. Protocol name `Noise_XX_Ed25519_ChaChaPoly_BLAKE2b`.
+- Each handshake message is framed like data: `u24le length || message`. The initiator sends first.
+- When the handshake completes, both sides send the usual 56-byte header (stream id + secretstream header),
+  then encrypted messages, exactly as after a DHT handshake. For XX the initiator completes by *sending*
+  msg3 and then sends its header right after it.
