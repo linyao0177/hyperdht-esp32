@@ -1,0 +1,7 @@
+# WiFi for all example and research apps. Copy to sdkconfig.wifi (gitignored),
+# fill in a 2.4 GHz network, then in the app directory: rm sdkconfig && idf.py build
+CONFIG_EXAMPLE_WIFI_SSID="your-ssid"
+CONFIG_EXAMPLE_WIFI_PASSWORD="your-password"
+
+# research/phase0 only: LAN address of the machine running tools/host/echo-server.js
+# CONFIG_POC_PEER_HOST="192.168.1.100"

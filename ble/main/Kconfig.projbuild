@@ -1,7 +1,0 @@
-menu "hdht BLE demo"
-
-    config HDHT_BLE_SEED_BYTE
-        hex "Seed byte for the key pair (0x33 = the same key the firmware/ app announces on the DHT)"
-        default 0x33
-
-endmenu

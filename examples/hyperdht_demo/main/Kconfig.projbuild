@@ -1,0 +1,38 @@
+menu "hdht demo"
+
+    config HDHT_BOOTSTRAP
+        string "Bootstrap node (ip:port), empty = public HyperDHT"
+        help
+            For a private testnet from tools/host/testnet.js use "<your LAN IP>:49800".
+        default ""
+
+    config HDHT_SERVER_KEY
+        string "Server public key to connect to (hex)"
+        default "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+        help
+            Default is the key printed by tools/host/testnet.js --server.
+
+    config HDHT_CONNECT_ROUNDS
+        int "Connections to make (to check for leaks)"
+        default 3
+
+    config HDHT_ROUND_INTERVAL_MS
+        int "Pause between client rounds"
+        default 1000
+        help
+            hyperdht allows one random-port holepunch per 20 s per node, so
+            use more than 20000 when a peer is behind a random (mobile) NAT.
+
+    config HDHT_SERVE_SECONDS
+        int "Then listen as a server for this long (0 = skip)"
+        default 120
+
+    config HDHT_SERVER_SEED_BYTE
+        hex "Seed byte for the board's server key pair (seed = 32 x this byte)"
+        default 0x33
+
+    config HDHT_TASK_STACK
+        int "Stack of the task running the event loop"
+        default 20480
+
+endmenu

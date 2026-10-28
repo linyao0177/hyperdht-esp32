@@ -1,0 +1,19 @@
+hyperdht-esp32
+Copyright (c) 2026 Leo Lin. Licensed under the MIT License (see LICENSE).
+
+This repository includes third-party code under its own license:
+
+- components/libudx/libudx: libudx by Holepunch (https://github.com/holepunchto/libudx),
+  Apache License 2.0, see components/libudx/libudx/LICENSE and NOTICE.
+  Modified: two bug fixes in src/udx.c, described in components/libudx/libudx/VENDORED.txt;
+  io_win.c removed.
+
+Fetched at build time, not included here:
+
+- libsodium (https://libsodium.org), ISC License, via the espressif/libsodium
+  ESP-IDF component (or the system package on desktop).
+
+The C implementation in components/hdht follows the wire protocols of
+hyperdht, dht-rpc, compact-encoding (MIT), @hyperswarm/secret-stream,
+noise-handshake and noise-curve-ed (Apache-2.0) by Holepunch. It was written
+from their documentation and source; no code from them is copied.
