@@ -12,6 +12,8 @@ Fetched at build time, not included here:
 
 - libsodium (https://libsodium.org), ISC License, via the espressif/libsodium
   ESP-IDF component (or the system package on desktop).
+- BoAT MER (https://github.com/TLAY-IO/boat-mer), Apache License 2.0, used only
+  by examples/boat_mer through the ESP-IDF component manager.
 
 The C implementation in components/hdht follows the wire protocols of
 hyperdht, dht-rpc, compact-encoding (MIT), @hyperswarm/secret-stream,

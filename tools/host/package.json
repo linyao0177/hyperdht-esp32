@@ -1,13 +1,15 @@
 {
   "name": "hyperdht-esp32-tools",
   "private": true,
-  "description": "Node.js peers for testing hyperdht-esp32: private testnet, test clients, vector generator, BLE client",
+  "description": "Node.js peers for testing hyperdht-esp32: private testnet, test clients, vector generator, BLE client, BoAT MER seller",
   "scripts": {
     "start": "node echo-server.js"
   },
   "dependencies": {
     "@abandonware/noble": "1.9.2-26",
+    "ethers": "6.17.0",
     "hyperdht": "6.35.0",
+    "sodium-universal": "5.0.1",
     "udx-native": "1.22.0"
   },
   "license": "MIT"

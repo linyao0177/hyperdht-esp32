@@ -1,0 +1,23 @@
+menu "BoAT MER over HyperDHT"
+
+config MER_BOOTSTRAP
+    string "Bootstrap node (ip:port), empty for the public HyperDHT"
+    default ""
+
+config MER_SELLER_KEY
+    string "HyperDHT public key (hex) of the seller to buy from, empty to only serve"
+    default ""
+
+config MER_CHAIN_ID
+    int "EIP-712 chainId of the settlement chain"
+    default 5042002
+
+config MER_GATEWAY_CONTRACT
+    string "EIP-712 verifyingContract (Circle Gateway)"
+    default "0x0077777d7EBA4688BDeF3E311b846F25870A19B9"
+
+config MER_TASK_STACK
+    int "hdht loop task stack size"
+    default 20480
+
+endmenu

@@ -176,7 +176,8 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`examples/minimal`](examples/minimal) | Start here: a device reachable by key, NVS identity, cross-task data |
 | [`examples/hyperdht_demo`](examples/hyperdht_demo) | Test firmware: client rounds, then server; optional BLE |
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
-| [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client |
+| [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, nanopayments over HyperDHT |
+| [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller |
 | [`docs`](docs) | Protocol notes and the feasibility study |
 | [`research/phase0`](research/phase0) | The original feasibility PoC (libsodium and libudx measurements) |
 | [`patches/libudx`](patches/libudx) | The libudx fixes, prepared for upstream |

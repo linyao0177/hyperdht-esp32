@@ -1,0 +1,4 @@
+dependencies:
+  boat-mer:
+    git: https://github.com/TLAY-IO/boat-mer.git
+    version: v1.0.1
