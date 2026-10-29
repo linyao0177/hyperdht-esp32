@@ -25,7 +25,8 @@ json_str (const char *json, const char *key, char *out, size_t cap);
 bool
 verify_record (const uint8_t public_key[32], const uint8_t *value, size_t len, uint8_t eth[20]);
 
-// anchor.c: submits signed readings to open anchor nodes (CONFIG_MER_ANCHOR_NODES)
+// anchor.c: finds open anchor nodes and submits signed readings to them
+// (CONFIG_MER_ANCHOR_CONTRACT, CONFIG_MER_ANCHOR_NODES)
 
 bool
 anchor_enabled (void);

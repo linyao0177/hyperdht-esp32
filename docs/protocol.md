@@ -255,6 +255,16 @@ puncher addr}` to the client.
   `{uint seq, buffer value, fixed64 signature}`, otherwise no value. The client verifies each value and keeps
   the highest seq. Nodes cache mutable records for 48 hours.
 
+## Lookup (index.js lookup, lib/persistent.js)
+
+- LOOKUP = 3: a query towards the topic with no value. A node holding announcements for the topic (up to 20,
+  plus the router entry when the topic is `BLAKE2b(publicKey)` of a server it relays for) replies
+  `lookupRawReply = {array(peer) peers, uint bump}` (bump omitted by older nodes), where
+  `peer = {fixed32 publicKey, array(ipv4 address) relayAddresses}`; otherwise no value.
+- The peers in a reply are not signed (the node checked the ANNOUNCE signature when storing it), so a client
+  should treat them as hints and authenticate by connecting. Announcements expire after 20 minutes unless
+  refreshed; Hyperswarm and `dht.announce` refresh them.
+
 ## SecretStream in-band handshake (lib/handshake.js)
 
 Used when there is no DHT handshake (e.g. over BLE or TCP).

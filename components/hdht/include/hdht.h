@@ -163,4 +163,22 @@ hdht_mutable_get (hdht_t *dht, const uint8_t public_key[32], uint64_t min_seq, h
 bool
 hdht_mutable_verify (const uint8_t public_key[32], uint64_t seq, const uint8_t *value, size_t len, const uint8_t signature[64]);
 
+// Topic lookup
+//
+// Finds the public keys announced under a topic (hyperdht's lookup, the peers
+// a Hyperswarm server announces). The reply is unsigned, so treat each key as
+// a hint and authenticate it by connecting. An operation still running when
+// the DHT is destroyed never calls back.
+
+#ifndef HDHT_LOOKUP_MAX_PEERS
+#define HDHT_LOOKUP_MAX_PEERS 16
+#endif
+
+// status is 0 when the query ran; peers is empty when nobody announced.
+// peers is valid only during the callback.
+typedef void (*hdht_lookup_cb)(hdht_t *dht, int status, const uint8_t (*peers)[32], size_t len, void *data);
+
+int
+hdht_lookup (hdht_t *dht, const uint8_t topic[32], hdht_lookup_cb cb, void *data);
+
 #endif

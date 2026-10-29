@@ -10,6 +10,7 @@ set(HDHT_SOURCES
   src/dht.c
   src/hdht.c
   src/holepunch.c
+  src/lookup.c
   src/messages.c
   src/mutable.c
   src/noise.c
@@ -78,6 +79,9 @@ target_link_libraries(test_ss hdht)
 
 add_executable(test_mutable test/test_mutable.c)
 target_link_libraries(test_mutable hdht)
+
+add_executable(test_lookup test/test_lookup.c)
+target_link_libraries(test_lookup hdht)
 
 enable_testing()
 add_test(NAME vectors COMMAND test_vectors)

@@ -2,9 +2,13 @@
 // open anchor nodes (tools/host/anchor-node.js) instead of one HashAnchor
 // server.
 //
-// - Nodes are found by key (CONFIG_MER_ANCHOR_NODES). Before connecting, the
-//   device reads the node's DID record; the node's quote must name the wallet
-//   in that record, or the device does not pay.
+// - Nodes are found by looking up the topic of the OpenAnchor deployment
+//   (CONFIG_MER_ANCHOR_CONTRACT on CONFIG_MER_ANCHOR_CHAIN_ID), the topic every
+//   anchor-node.js announces under; CONFIG_MER_ANCHOR_NODES adds fixed keys.
+//   Before connecting, the device reads the node's DID record, which must be
+//   an anchor/1 record for that same deployment. The node's quote must name
+//   the wallet in that record, or the device does not pay. A discovered node
+//   with no valid record, or that keeps failing, is dropped for another.
 // - Every CONFIG_MER_ANCHOR_INTERVAL_S seconds MER attests a reading (SHA-256 +
 //   Ed25519). The hash and signature go to every connected node, each with an
 //   EIP-3009 payment of the node's fee.
@@ -25,6 +29,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <ctype.h>
+#include <strings.h>
+
+#include <sodium.h>
+
 #include "esp_random.h"
 #include "esp_timer.h"
 
@@ -38,6 +47,10 @@
 #define MAX_PENDING 8
 #define MAX_FEE     100 // micro-USDC we accept to pay per submission
 #define OVERDUE_S   120
+#define LOOKUP_S    300 // topic lookup while a slot is free
+#define MAX_FAILS   3   // failed connects before a discovered node is dropped
+#define MAX_DROPPED 4   // dropped keys skipped by later lookups...
+#define DROPPED_S   1800 // ...for this long
 
 typedef struct {
   uint8_t hash[32];
@@ -48,6 +61,10 @@ typedef struct {
 } pending_t;
 
 typedef struct {
+  bool used;
+  bool discovered;
+  bool drop; // freed on the next tick, outside the stream callbacks
+  uint8_t fails;
   int index;
   uint8_t key[32];
   hdht_stream_t stream;
@@ -74,9 +91,14 @@ typedef struct {
 } node_t;
 
 static node_t nodes[MAX_NODES];
-static int nodes_len;
+static int next_index;
 static bool started;
+static bool looking_up;
 static uint32_t readings;
+static uint8_t topic[32];
+static uint8_t dropped[MAX_DROPPED][32];
+static int64_t dropped_at[MAX_DROPPED];
+static int dropped_next;
 
 static void
 connect_node (node_t *n);
@@ -184,6 +206,7 @@ static void
 on_node_open (hdht_stream_t *s) {
   node_t *n = node_of(s);
   n->up = true;
+  n->fails = 0;
   printf("MER|anchor node%d connected via %s\n", n->index, hdht_addr_str(&s->remote_addr));
 }
 
@@ -191,10 +214,25 @@ static void
 on_node_close (hdht_stream_t *s, int error) {
   node_t *n = node_of(s);
   if (n->up || error) printf("MER|anchor node%d closed error=%d\n", n->index, error);
+  if (!n->up && n->discovered && ++n->fails >= MAX_FAILS) n->drop = true;
   n->up = false;
   n->busy = false;
   n->has_quote = false;
   n->ticks_down = 0;
+}
+
+// an anchor/1 record for our deployment: same chain, same contract
+static bool
+is_our_deployment (const uint8_t *value, size_t len) {
+  if (CONFIG_MER_ANCHOR_CONTRACT[0] == '\0') return true; // fixed nodes only
+  static char json[HDHT_MUTABLE_MAX_VALUE + 1];
+  memcpy(json, value, len);
+  json[len] = '\0';
+  char svc[16], contract[48];
+  const char *chain = strstr(json, "\"chain_id\":");
+  if (!json_str(json, "svc", svc, sizeof(svc)) || strcmp(svc, "anchor/1") != 0) return false;
+  if (chain == NULL || strtoul(chain + 11, NULL, 10) != CONFIG_MER_ANCHOR_CHAIN_ID) return false;
+  return json_str(json, "contract", contract, sizeof(contract)) && strcasecmp(contract, CONFIG_MER_ANCHOR_CONTRACT) == 0;
 }
 
 static void
@@ -202,11 +240,13 @@ on_node_record (hdht_t *d, int status, uint64_t seq, const uint8_t *value, size_
   (void) d;
   (void) seq;
   node_t *n = data;
-  n->has_record = status == 0 && verify_record(n->key, value, len, n->wallet);
-  printf("MER|anchor node%d record %s\n", n->index, n->has_record ? "valid" : "missing or invalid: not connecting");
+  bool valid = status == 0 && verify_record(n->key, value, len, n->wallet);
+  n->has_record = valid && is_our_deployment(value, len);
+  printf("MER|anchor node%d record %s\n", n->index, n->has_record ? "valid" : valid ? "for another service or deployment: not connecting" : "missing or invalid: not connecting");
   if (!n->has_record) {
     n->busy = false;
     n->ticks_down = 0;
+    if (n->discovered) n->drop = true;
     return;
   }
   connect_node(n);
@@ -272,7 +312,7 @@ submit (node_t *n, const boat_attestation_t *att) {
 static void
 attest_and_submit (void) {
   int ready = 0;
-  for (int i = 0; i < nodes_len; i++) ready += nodes[i].up && nodes[i].has_quote;
+  for (int i = 0; i < MAX_NODES; i++) ready += nodes[i].used && nodes[i].up && nodes[i].has_quote;
   if (ready == 0) return;
 
   char payload[96];
@@ -284,14 +324,61 @@ attest_and_submit (void) {
   boat_bytes_to_hex(att.hash, 32, hash_hex);
   printf("MER|anchor reading %lu hash=%s attest_ms=%ld nodes=%d payload=%s\n", (unsigned long) readings, hash_hex, (long) ((esp_timer_get_time() - t0) / 1000), ready, payload);
 
-  for (int i = 0; i < nodes_len; i++) {
-    if (nodes[i].up && nodes[i].has_quote) submit(&nodes[i], &att);
+  for (int i = 0; i < MAX_NODES; i++) {
+    if (nodes[i].used && nodes[i].up && nodes[i].has_quote) submit(&nodes[i], &att);
   }
 }
 
 bool
 anchor_enabled (void) {
-  return CONFIG_MER_ANCHOR_NODES[0] != '\0';
+  return CONFIG_MER_ANCHOR_CONTRACT[0] != '\0' || CONFIG_MER_ANCHOR_NODES[0] != '\0';
+}
+
+static node_t *
+add_node (const uint8_t key[32], bool discovered) {
+  if (memcmp(key, kp.ed25519_pk, 32) == 0) return NULL;
+  int64_t now = esp_timer_get_time();
+  for (int i = 0; discovered && i < MAX_DROPPED; i++) {
+    if (dropped_at[i] && now - dropped_at[i] < DROPPED_S * 1000000LL && memcmp(dropped[i], key, 32) == 0) return NULL;
+  }
+  node_t *free_slot = NULL;
+  for (int i = 0; i < MAX_NODES; i++) {
+    if (nodes[i].used && memcmp(nodes[i].key, key, 32) == 0) return NULL;
+    if (!nodes[i].used && free_slot == NULL) free_slot = &nodes[i];
+  }
+  if (free_slot == NULL) return NULL;
+  node_t *n = free_slot;
+  memset(n, 0, sizeof(*n));
+  n->used = true;
+  n->discovered = discovered;
+  n->index = ++next_index;
+  memcpy(n->key, key, 32);
+  n->stream.data = n;
+  return n;
+}
+
+static void
+on_lookup (hdht_t *d, int status, const uint8_t (*peers)[32], size_t len, void *data) {
+  (void) d;
+  (void) data;
+  looking_up = false;
+  int added = 0;
+  for (size_t i = 0; status == 0 && i < len; i++) {
+    node_t *n = add_node(peers[i], true);
+    if (n == NULL) continue;
+    char hex[17];
+    sodium_bin2hex(hex, sizeof(hex), n->key, 8);
+    printf("MER|anchor node%d discovered %s...\n", n->index, hex);
+    resolve_node(n);
+    added++;
+  }
+  printf("MER|anchor lookup status=%d announced=%u added=%d\n", status, (unsigned) len, added);
+}
+
+static void
+lookup_nodes (void) {
+  if (CONFIG_MER_ANCHOR_CONTRACT[0] == '\0' || looking_up) return;
+  looking_up = hdht_lookup(&dht, topic, on_lookup, NULL) == 0;
 }
 
 void
@@ -299,18 +386,23 @@ anchor_start (void) {
   if (started || !anchor_enabled()) return;
   started = true;
 
-  // comma-separated hex keys
+  // BLAKE2b-256("open-anchor/1 <chain id> <contract, lowercase>"), as tools/host/open-anchor.js
+  char name[96];
+  int len = snprintf(name, sizeof(name), "open-anchor/1 %d %s", CONFIG_MER_ANCHOR_CHAIN_ID, CONFIG_MER_ANCHOR_CONTRACT);
+  for (char *c = name; *c; c++) *c = (char) tolower((unsigned char) *c);
+  crypto_generichash(topic, 32, (const uint8_t *) name, (size_t) len, NULL, 0);
+
+  // fixed nodes: comma-separated hex keys
   const char *s = CONFIG_MER_ANCHOR_NODES;
-  while (*s && nodes_len < MAX_NODES) {
-    node_t *n = &nodes[nodes_len];
-    if (strlen(s) < 64 || sodium_hex2bin(n->key, 32, s, 64, NULL, NULL, NULL) != 0) break;
-    n->index = ++nodes_len;
-    n->stream.data = n;
+  uint8_t key[32];
+  while (strlen(s) >= 64 && sodium_hex2bin(key, 32, s, 64, NULL, NULL, NULL) == 0) {
+    node_t *n = add_node(key, false);
+    if (n) resolve_node(n);
     s += 64;
     while (*s == ',' || *s == ' ') s++;
   }
-  printf("MER|anchor nodes=%d interval_s=%d\n", nodes_len, CONFIG_MER_ANCHOR_INTERVAL_S);
-  for (int i = 0; i < nodes_len; i++) resolve_node(&nodes[i]);
+  printf("MER|anchor contract=%s chain=%d fixed_nodes=%d interval_s=%d\n", CONFIG_MER_ANCHOR_CONTRACT[0] ? CONFIG_MER_ANCHOR_CONTRACT : "(none)", CONFIG_MER_ANCHOR_CHAIN_ID, next_index, CONFIG_MER_ANCHOR_INTERVAL_S);
+  lookup_nodes();
 }
 
 void
@@ -318,8 +410,19 @@ anchor_tick (uint32_t ticks) {
   if (!started) return;
   int64_t now = esp_timer_get_time();
 
-  for (int i = 0; i < nodes_len; i++) {
+  int used = 0;
+  for (int i = 0; i < MAX_NODES; i++) {
     node_t *n = &nodes[i];
+    if (!n->used) continue;
+    if (n->drop && !n->up && !n->busy) {
+      printf("MER|anchor node%d dropped\n", n->index);
+      memcpy(dropped[dropped_next], n->key, 32);
+      dropped_at[dropped_next] = now;
+      dropped_next = (dropped_next + 1) % MAX_DROPPED;
+      n->used = false;
+      continue;
+    }
+    used++;
     if (!n->up && !n->busy && ++n->ticks_down >= 5) resolve_node(n);
 
     for (int j = 0; j < MAX_PENDING; j++) {
@@ -329,16 +432,20 @@ anchor_tick (uint32_t ticks) {
         n->stats.overdue++;
         char hex[17];
         boat_bytes_to_hex(p->hash, 8, hex);
-        printf("MER|anchor node%d receipt OVERDUE hash=%s... (accepted but not anchored after %d s)\n", n->index, hex, OVERDUE_S);
+        printf("MER|anchor node%d receipt OVERDUE hash=%s... (no receipt after %d s)\n", n->index, hex, OVERDUE_S);
       }
     }
   }
 
+  // look again for nodes while a slot is free, often while there are none
+  if (used < MAX_NODES && ticks % (used == 0 ? 30 : LOOKUP_S) == 0) lookup_nodes();
+
   if (ticks % CONFIG_MER_ANCHOR_INTERVAL_S == 0) attest_and_submit();
 
   if (ticks % 60 == 0) {
-    for (int i = 0; i < nodes_len; i++) {
+    for (int i = 0; i < MAX_NODES; i++) {
       node_t *n = &nodes[i];
+      if (!n->used) continue;
       printf("MER|anchor node%d stats submitted=%lu accepted=%lu rejected=%lu receipts=%lu bad=%lu overdue=%lu\n", n->index, (unsigned long) n->stats.submitted, (unsigned long) n->stats.accepted, (unsigned long) n->stats.rejected, (unsigned long) n->stats.receipts, (unsigned long) n->stats.bad_receipts, (unsigned long) n->stats.overdue);
     }
   }

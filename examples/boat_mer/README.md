@@ -123,8 +123,9 @@ Three runs: a normal one, a dial from the Mac, and one against a seller billing 
 | Piece | What it does |
 |---|---|
 | [`tools/host/contracts/OpenAnchor.sol`](../../tools/host/contracts/OpenAnchor.sol) | Anyone can anchor a root; the first anchor is kept with who did it and when. No operator role and no upgrade path |
-| [`tools/host/anchor-node.js`](../../tools/host/anchor-node.js) | An anchor node. Devices reach it over HyperDHT by its key. It checks each submission, batches every 20 s into a tree that HashAnchor's public verifier accepts (keccak256, sorted pairs), anchors from its own wallet, appends the batch to a Hypercore anyone can replicate, and sends receipts back. It publishes a DID record with its wallet, fee, contract and log key |
-| [`main/anchor.c`](main/anchor.c) | The device side: reads each node's DID record, attests a reading every 30 s (MER: SHA-256 + Ed25519), sends it to every node with an EIP-3009 payment of the node's fee, checks each receipt's Merkle proof, and flags receipts that do not arrive |
+| [`tools/host/anchor-node.js`](../../tools/host/anchor-node.js) | An anchor node ([operator guide](../../docs/anchor-node.md)). It announces itself under the deployment's topic and devices reach it over HyperDHT by its key. It checks each submission, batches every 20 s into a tree that HashAnchor's public verifier accepts (keccak256, sorted pairs), anchors from its own wallet, appends the batch to a Hypercore anyone can replicate, and sends receipts back. It publishes a DID record with its wallet, fee, contract and log key |
+| [`main/anchor.c`](main/anchor.c) | The device side: finds nodes by looking up the deployment's topic, reads each node's DID record, attests a reading every 30 s (MER: SHA-256 + Ed25519), sends it to every node with an EIP-3009 payment of the node's fee, checks each receipt's Merkle proof, and flags receipts that do not arrive |
+| [`tools/host/anchor-discover.js`](../../tools/host/anchor-discover.js) | Lists a deployment's nodes and checks their records, as the device does |
 | [`tools/host/anchor-verify.js`](../../tools/host/anchor-verify.js) | An independent verifier. From two DIDs only, it replicates the node's batch log, rebuilds every receipt for the device, checks it with HashAnchor's own `verifyReceiptProof`, and reads the contract |
 
 What changes compared with the hosted service:
@@ -137,7 +138,11 @@ What changes compared with the hosted service:
 
 ### Running it
 
-1. Start a local chain and deploy the contract (needs [Foundry](https://getfoundry.sh)):
+On the public testnet, set `CONFIG_MER_ANCHOR_CONTRACT` to the Arc testnet contract in [docs/anchor-node.md](../../docs/anchor-node.md#the-network). Leave `CONFIG_MER_ANCHOR_CHAIN_ID` at 5042002 and `CONFIG_MER_SELLER_KEY` empty. Then build and flash. The board finds whatever nodes are running. To run nodes of your own, follow the operator guide.
+
+On a local chain (needs [Foundry](https://getfoundry.sh)):
+
+1. Start a chain and deploy the contract:
 
    ```bash
    anvil
@@ -147,18 +152,22 @@ What changes compared with the hosted service:
    cd tools/host && node anchor-deploy.js
    ```
 
-2. Start nodes, each in its own terminal, with the printed contract address. Index 1–3 selects the node's key and an anvil dev wallet. `--drop` makes a node that accepts and never anchors:
+2. Start nodes, each in its own terminal. `--dev 1`–`3` selects an anvil dev wallet and a fixed identity. `--drop` makes a node that accepts and never anchors:
 
    ```bash
-   node anchor-node.js public 1 <contract>
+   node anchor-node.js public --dev 1
    ```
 
-3. Set `CONFIG_MER_ANCHOR_NODES` to the nodes' keys (the hex after `did:mw:` in each node's first line), comma-separated, then build and flash. `CONFIG_MER_SELLER_KEY` can stay empty.
+3. Set `CONFIG_MER_ANCHOR_CONTRACT` to the printed contract address and `CONFIG_MER_ANCHOR_CHAIN_ID` to 31337, then build and flash. `CONFIG_MER_ANCHOR_NODES` can add fixed node keys alongside discovery.
 
-4. Verify a node's work for the board:
+4. List the nodes, or verify a node's work for the board:
 
    ```bash
-   node anchor-verify.js public did:mw:<node> did:mw:<board>
+   node anchor-discover.js public --network local
+   ```
+
+   ```bash
+   node anchor-verify.js public did:mw:<node> did:mw:<board> --network local
    ```
 
 ### Results (2026-10-29, same board, public HyperDHT, local anvil chain)
@@ -181,13 +190,40 @@ Three nodes: two honest, one started with `--drop`. The board ran for 4 minutes.
 
 A first run found two node bugs, both fixed before these results: the second node to build an identical root failed with "already anchored" and lost the batch, and a failed transaction left the node's nonce manager stuck so it never anchored again.
 
+Discovery was added after this run; see the testnet results below.
+
+### Results: public testnet (2026-10-29, same board, public HyperDHT, Arc testnet)
+
+OpenAnchor is deployed at [`0xd7d651a6fecE5C9ed96796678ED995Fb12dAbeCA`](https://explorer.testnet.arc.io/address/0xd7d651a6fecE5C9ed96796678ED995Fb12dAbeCA) on Arc testnet (chain 5042002). Two nodes ran with their own identities and wallets ([operator guide](../../docs/anchor-node.md)). A third key announced itself on the topic without a DID record, standing in for a bogus node. The board was configured with the contract address only and no node keys. It ran across two boots, with about 25 minutes of output captured.
+
+| | Result |
+|---|---|
+| Discovery | One lookup, about 5 s after the board's own record was published, found all 3 announced keys. Both real nodes' records were valid. The bogus key had no record, so the board dropped it and later lookups skipped it. `anchor-discover.js` found the same 3 keys, 2 of them valid, in 1.3–2.1 s |
+| Receipts | 69 receipts on the board in the captured output, every Merkle proof valid, 0 rejected submissions |
+| Submit to receipt | 8.5–29 s, median 18 s, in the last run, with 20 s batches and Arc block times |
+| On chain | 66 roots anchored: 37 by node 1, 29 by node 2. When both nodes built the same single-leaf root, the second reused the first's transaction |
+| Gas | about 47,000 gas per anchor, 0.0012 USDC on testnet, whatever the batch size. Deploying cost 0.0085 USDC |
+| Independent verification | From the two DIDs only: node 1 54 of 54 leaves pass, node 2 38 of 38. Logs of 46 and 38 batches replicated in 13–18 s |
+| Node restart | The board saw both streams close, re-read the records and reconnected within 10 s |
+| Node stopped with work pending | It anchored the pending submission, delivered the receipt and closed the stream before exiting. The board dropped it after 3 failed reconnects. It had unannounced, so the next lookup no longer listed it |
+| Free heap | ~141 KB steady, lowest 60 KB |
+| Loop task stack | 13.3 KB of 20 KB at peak |
+| Image | 0x10c8a0 bytes, 2 KB more than with fixed node keys |
+
+The testnet runs found three problems in the nodes. All are fixed, and the last run above was clean:
+
+- **Two nodes building the same root at the same moment.** One of them lost the race: its check showed the root missing, then its own transaction failed with "already anchored". The node put the batch back in its queue for a later round, which delayed its receipts. It now re-checks the chain after a failure and reuses the other node's transaction.
+- **A node that stopped dropped what it had accepted.** Accepted submissions were held only in memory. It now anchors them before exiting.
+- **A stopped node sent its last receipts too late.** The process exited before they left the socket. It now ends its streams and waits for them to close.
+
 What this does not cover yet:
 
 - **Settlement.** Payments are verified, not settled.
-- **A real chain and real gas economics.** With many nodes, batches get smaller and gas per hash rises. A shared root of roots, or a cheap chain, would offset that.
-- **Discovery.** Nodes are configured by key. Open discovery needs Hyperswarm topics on the device, which hdht does not have yet.
-- **Mirrors.** Only the node itself serves its log. Independent mirrors that keep replicating are needed so receipts outlive nodes.
+- **Gas at scale.** Each node pays one anchor per batch, whatever its size. With many nodes and few devices each, batches get small and gas per hash rises. A shared root of roots, or longer batches, would offset that.
+- **Mirrors.** Only the node itself serves its log. To verify node 2 after it stopped, it had to be restarted. Independent mirrors that keep replicating are needed so receipts outlive nodes.
 - **Node-signed receipts.** HashAnchor receipts have an optional `signature` field; here the authenticated stream stands in for it, which helps only the device.
+- **Spam on the topic.** Lookup replies are unsigned, and anyone can announce under the topic. The board checks each key's record and keeps at most 3 nodes, so many bogus keys can delay discovery. Ranking nodes by record age or stake would help.
+- **Explorer source verification** of the contract (see the [operator guide](../../docs/anchor-node.md#the-network)).
 
 ## Integration notes
 

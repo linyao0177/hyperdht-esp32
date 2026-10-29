@@ -157,7 +157,7 @@ A connection goes like this:
 4. Each side sends UDP probes until one gets through.
 5. The UDX stream is connected on that socket and the SecretStream starts.
 
-How the pieces fit together as a base layer for products (identity, reachability, encrypted channels, signed records, trust model, roadmap) is in [`docs/architecture.md`](docs/architecture.md). The byte-level details are in [`docs/protocol.md`](docs/protocol.md). The design study that led here, including memory estimates and the alternatives considered, is in [`docs/feasibility.md`](docs/feasibility.md).
+How the pieces fit together as a base layer for products (identity, reachability, encrypted channels, signed records, trust model, roadmap) is in [`docs/architecture.md`](docs/architecture.md). The byte-level details are in [`docs/protocol.md`](docs/protocol.md). To run an open anchor node on the public testnet, see [`docs/anchor-node.md`](docs/anchor-node.md). The design study that led here, including memory estimates and the alternatives considered, is in [`docs/feasibility.md`](docs/feasibility.md).
 
 ## Same key over BLE
 
@@ -176,8 +176,8 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`examples/minimal`](examples/minimal) | Start here: a device reachable by key, NVS identity, cross-task data |
 | [`examples/hyperdht_demo`](examples/hyperdht_demo) | Test firmware: client rounds, then server; optional BLE |
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
-| [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, open anchor nodes, nanopayments over HyperDHT |
-| [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node and verifier |
+| [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, open anchor nodes found by topic lookup (public testnet), nanopayments over HyperDHT |
+| [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier |
 | [`docs`](docs) | Architecture, protocol notes and the feasibility study |
 | [`research/phase0`](research/phase0) | The original feasibility PoC (libsodium and libudx measurements) |
 | [`patches/libudx`](patches/libudx) | The libudx fixes, prepared for upstream |
@@ -191,7 +191,7 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 
 - **Random NAT on the device side**: no holepunching. hyperdht handles this case with up to 256 sockets ("birthday" punching), which a C3 cannot afford. A device behind a consistent NAT can still reach peers behind random NATs.
 - **No relay fallback yet** (`blind-relay` / `relayThrough`), so connections that cannot be holepunched fail.
-- **Not implemented**: Hyperswarm topic discovery, immutable records, LOOKUP, Protomux, IPv6, reusable sockets, unordered UDX messages.
+- **Not implemented**: announcing under a Hyperswarm topic from the device (looking one up works), immutable records, Protomux, IPv6, reusable sockets, unordered UDX messages.
 - **The device is never a DHT routing node**: it is always an ephemeral, firewalled node, by design.
 - **ESP32-C3 only** for now. Other ESP32 variants should work but are untested.
 - **Power**: a server keeps WiFi on and pings its relay nodes every 3 s. Battery devices fit the client role, or BLE.

@@ -17,15 +17,19 @@
 // - Receipts go back to the device over the same stream.
 // - The node publishes a DID record with its wallet, fee, contract and log key.
 //
-// usage: node anchor-node.js <bootstrap host:port | public> <index 1-3> <contract>
-//          [--rpc http://127.0.0.1:8545] [--batch 20] [--store dir] [--drop]
+// - The node announces itself under the deployment's topic (open-anchor.js),
+//   so devices and clients find it without being told its key.
 //
-// --store  where the batch log lives, so it survives restarts
-//          (default: <tmp>/anchor-node-<index>-<contract>)
+// usage: node anchor-node.js <bootstrap host:port | public>
+//          [--network arc-testnet | local] [--contract addr] [--rpc url]
+//          [--store dir] [--batch 20] [--fee 10] [--drop] [--dev 1-3]
+//
+// --store  the node's identity, wallet and batch log, created on first run
+//          (default ~/.open-anchor/node). Fund the wallet it prints with gas.
+// --fee    micro-USDC per submission
 // --drop   accept submissions but never anchor them (a censoring node)
-//
-// The node's wallet is anvil dev account <index>, a well-known test key: never
-// use it on a real network.
+// --dev    use anvil dev account <n> and a fixed identity, for a local chain:
+//          well-known test keys, never use them on a real network
 
 const os = require('os')
 const path = require('path')
@@ -34,7 +38,8 @@ const Hyperswarm = require('hyperswarm')
 const Corestore = require('corestore')
 const sodium = require('sodium-universal')
 const { MerkleTree } = require('merkletreejs')
-const { Contract, JsonRpcProvider, Wallet, keccak256, verifyMessage, verifyTypedData } = require('ethers')
+const { Contract, Wallet, formatEther, keccak256, verifyTypedData } = require('ethers')
+const { NETWORKS, ABI, provider, topic, verifyRecord, nodeKeys } = require('./open-anchor')
 
 const positional = []
 const opts = {}
@@ -44,14 +49,18 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (a.startsWith('--')) opts[a.slice(2)] = process.argv[++i]
   else positional.push(a)
 }
-const [where = 'public', index = '1', contractAddress] = positional
+const [where = 'public'] = positional
 const bootstrap = where === 'public' ? undefined : [where]
-const rpc = opts.rpc || 'http://127.0.0.1:8545'
+const dev = opts.dev ? Number(opts.dev) : 0
+const network = NETWORKS[opts.network || (dev ? 'local' : 'arc-testnet')]
+const rpc = opts.rpc || network.rpc
+const contractAddress = opts.contract || network.contract
 const BATCH_S = Number(opts.batch || 20)
+const FEE = BigInt(opts.fee || 10) // micro-USDC per submission
 const drop = !!opts.drop
 
-if (!contractAddress) {
-  console.error('usage: node anchor-node.js <bootstrap | public> <index 1-3> <contract> [--rpc url] [--batch s] [--drop]')
+if (!network || !contractAddress) {
+  console.error('usage: node anchor-node.js <bootstrap | public> [--network n] [--contract addr] [--rpc url] [--store dir] [--batch s] [--fee n] [--drop] [--dev n]')
   process.exit(1)
 }
 
@@ -61,8 +70,6 @@ const ANVIL_KEYS = [
   '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a',
   '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6'
 ]
-
-const FEE = 10n // micro-USDC per submission
 
 // the EIP-712 domain the board pays under (examples/boat_mer Kconfig defaults)
 const domain = {
@@ -82,34 +89,22 @@ const types = {
   ]
 }
 
-const ABI = [
-  'function anchorRoot(bytes32 merkleRoot)',
-  'function anchors(bytes32) view returns (uint64 timestamp, address anchorer)',
-  'event RootAnchored(bytes32 indexed merkleRoot, address indexed anchorer, uint256 timestamp)'
-]
-
-const keyPair = HyperDHT.keyPair(Buffer.alloc(32, 0x60 + Number(index)))
+const storeDir = opts.store || (dev ? path.join(os.tmpdir(), `anchor-node-${dev}-${contractAddress.slice(2, 10).toLowerCase()}`) : path.join(os.homedir(), '.open-anchor', 'node'))
+const keys = dev ? { keyPair: HyperDHT.keyPair(Buffer.alloc(32, 0x60 + dev)), walletKey: ANVIL_KEYS[dev] } : nodeKeys(storeDir)
+const keyPair = keys.keyPair
 const did = 'did:mw:' + keyPair.publicKey.toString('hex')
-const provider = new JsonRpcProvider(rpc)
-const wallet = new Wallet(ANVIL_KEYS[Number(index)], provider)
+const chain = provider(rpc)
+const wallet = new Wallet(keys.walletKey, chain)
 const contract = new Contract(contractAddress, ABI, wallet) // one transaction at a time
 
 const keccak = (b) => Buffer.from(keccak256(b).slice(2), 'hex')
 const hex = (b) => '0x' + b.toString('hex')
-const tag = `NODE${index}|`
+const tag = `NODE${dev || ''}${dev ? '' : '[' + path.basename(storeDir) + ']'}|`
 
 let pending = [] // { leaf, hash, pk, sig, conn }
+const conns = new Set()
 const usedNonces = new Set()
 const totals = { accepted: 0, rejected: 0, anchored: 0, batches: 0, shared: 0 }
-
-// A DID record is valid when its did is the key it is stored under and its
-// eth_sig (EIP-191 over the did) recovers to its eth address.
-function verifyRecord (publicKey, value) {
-  const r = JSON.parse(value.toString())
-  if (r.did !== 'did:mw:' + publicKey.toString('hex')) return null
-  if (verifyMessage(r.did, r.eth_sig).toLowerCase() !== r.eth.toLowerCase()) return null
-  return r
-}
 
 function send (conn, msg) {
   if (!conn.destroyed) conn.write(Buffer.from(JSON.stringify(msg)))
@@ -117,6 +112,8 @@ function send (conn, msg) {
 
 function serve (conn, dht) {
   const pk = conn.remotePublicKey
+  conns.add(conn)
+  conn.on('close', () => conns.delete(conn))
   const deviceDid = 'did:mw:' + pk.toString('hex')
   console.log(tag + 'device connected', deviceDid.slice(0, 23) + '...')
 
@@ -189,27 +186,40 @@ async function anchorBatch (core) {
   const root = tree.getRoot()
 
   const started = Date.now()
+  // Another node may anchor the same root: a device that submits one reading
+  // to several nodes makes identical single-leaf batches. The root is on chain
+  // either way, so reuse that transaction, also when the other node's landed
+  // between our check and our own transaction.
+  const anchoredBy = async () => {
+    const existing = await contract.anchors(root)
+    if (existing.timestamp === 0n) return null
+    // public RPCs limit log ranges; the other node anchored it moments ago
+    const latest = await chain.getBlockNumber()
+    const [ev] = await contract.queryFilter(contract.filters.RootAnchored(root), Math.max(0, latest - 9000))
+    if (!ev) throw new Error('anchored root without a recent event')
+    totals.shared++
+    return { rc: { hash: ev.transactionHash, blockNumber: ev.blockNumber }, anchorer: existing.anchorer }
+  }
+
   let rc, anchorer
   try {
-    // Another node may already have anchored the same root: a device that
-    // submits one reading to several nodes makes identical single-leaf batches.
-    // The root is on chain either way, so reuse that transaction.
-    const existing = await contract.anchors(root)
-    if (existing.timestamp > 0n) {
-      const [ev] = await contract.queryFilter(contract.filters.RootAnchored(root))
-      rc = { hash: ev.transactionHash, blockNumber: ev.blockNumber }
-      anchorer = existing.anchorer
-      totals.shared++
-    } else {
-      rc = await (await contract.anchorRoot(root)).wait()
-      anchorer = wallet.address
+    let shared = await anchoredBy()
+    if (!shared) {
+      try {
+        rc = await (await contract.anchorRoot(root)).wait()
+        anchorer = wallet.address
+      } catch (err) {
+        shared = await anchoredBy()
+        if (!shared) throw err
+      }
     }
+    if (shared) ({ rc, anchorer } = shared)
   } catch (err) {
     pending = batch.concat(pending) // try again next round
     throw err
   }
-  const block = await provider.getBlock(rc.blockNumber)
-  const { chainId } = await provider.getNetwork()
+  const block = await chain.getBlock(rc.blockNumber)
+  const { chainId } = await chain.getNetwork()
   totals.batches++
   totals.anchored += batch.length
   const by = anchorer === wallet.address ? 'self' : 'shared, anchored by ' + anchorer
@@ -230,8 +240,13 @@ async function anchorBatch (core) {
 }
 
 async function main () {
+  const { chainId } = await chain.getNetwork()
+  const balance = await chain.getBalance(wallet.address)
+  console.log(`${tag}chain ${chainId} contract ${contractAddress} wallet ${wallet.address} balance=${formatEther(balance)}`)
+  if (balance === 0n) console.log(`${tag}WALLET EMPTY: fund ${wallet.address} with gas${network.faucet ? ' (' + network.faucet + ')' : ''}; anchoring retries until then`)
+
   // the batch log anyone can replicate
-  const store = new Corestore(opts.store || path.join(os.tmpdir(), `anchor-node-${index}-${contractAddress.slice(2, 10).toLowerCase()}`))
+  const store = new Corestore(path.join(storeDir, 'log'))
   const core = store.get({ name: 'batches', valueEncoding: 'json' })
   await core.ready()
   const swarm = new Hyperswarm({ bootstrap })
@@ -242,7 +257,6 @@ async function main () {
   const server = dht.createServer((conn) => serve(conn, dht))
   await server.listen(keyPair)
 
-  const { chainId } = await provider.getNetwork()
   const record = {
     v: 1,
     did,
@@ -254,29 +268,62 @@ async function main () {
     contract: contractAddress,
     log: core.key.toString('hex')
   }
+  const value = Buffer.from(JSON.stringify(record))
   const seq = Math.floor(Date.now() / 1000)
-  await dht.mutablePut(keyPair, Buffer.from(JSON.stringify(record)), { seq })
-  console.log(`${tag}listening ${did}`)
-  console.log(`${tag}record published wallet=${wallet.address} log=${record.log.slice(0, 16)}... batch_s=${BATCH_S}${drop ? ' --drop' : ''}`)
+  const deployment = topic(chainId, contractAddress)
 
-  let busy = false
-  setInterval(async () => {
-    if (busy) return
-    busy = true
+  // Announcements expire after about 20 minutes and records after 48 hours,
+  // so both are refreshed while the node runs.
+  let refreshes = 0
+  const refresh = async () => {
+    try {
+      if (refreshes++ % 36 === 0) await dht.mutablePut(keyPair, value, { seq })
+      await dht.announce(deployment, keyPair, []).finished()
+    } catch (err) {
+      console.log(tag + 'refresh failed', err.message)
+    }
+  }
+  await refresh()
+  setInterval(refresh, 10 * 60 * 1000)
+
+  console.log(`${tag}listening ${did}`)
+  console.log(`${tag}record published, announced on topic ${deployment.toString('hex').slice(0, 16)}... fee=${FEE} log=${record.log.slice(0, 16)}... batch_s=${BATCH_S}${drop ? ' --drop' : ''}`)
+
+  let busy = null // the running batch
+  const runBatch = async () => {
     try {
       await anchorBatch(core)
     } catch (err) {
       console.log(tag + 'anchor failed', err.shortMessage || err.message)
     }
-    busy = false
+  }
+  const timer = setInterval(async () => {
+    if (busy) return
+    busy = runBatch()
+    await busy
+    busy = null
   }, BATCH_S * 1000)
 
-  const summary = () => {
+  // Accepted submissions live in memory until their batch is anchored, so
+  // anchor what is left before exiting; receipts still reach open streams.
+  let stopping = false
+  const stop = async () => {
+    if (stopping) return
+    stopping = true
+    clearInterval(timer)
+    if (busy) await busy
+    if (pending.length) {
+      console.log(`${tag}anchoring ${pending.length} pending before exit`)
+      await runBatch()
+    }
+    // let the last receipts reach the devices, and stop being discovered
+    const closed = [...conns].map((c) => new Promise((resolve) => { c.on('close', resolve); c.end() }))
+    await Promise.race([Promise.all([...closed, dht.unannounce(deployment, keyPair)]), new Promise((resolve) => setTimeout(resolve, 3000))])
     console.log(`${tag}summary accepted=${totals.accepted} rejected=${totals.rejected} anchored=${totals.anchored} batches=${totals.batches} shared_roots=${totals.shared} log_length=${core.length}`)
     process.exit(0)
   }
-  process.on('SIGINT', summary)
-  process.on('SIGTERM', summary)
+  process.on('SIGINT', stop)
+  process.on('SIGTERM', stop)
 }
 
 main()

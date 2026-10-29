@@ -66,7 +66,7 @@ How it maps to the Holepunch stack:
 | Layer | Holepunch (JS) | On the module |
 |---|---|---|
 | Apps, storage | Pear, Hypercore, Autobase | Out of scope on the device; peers can run them |
-| Discovery by topic | Hyperswarm | Not yet: peers dial the device by key |
+| Discovery by topic | Hyperswarm | Lookup: the device finds peers announced under a topic (`hdht_lookup`). It does not announce itself under one; peers dial it by key |
 | Peer connections | hyperdht | `components/hdht` (C) |
 | Records | hyperdht `mutablePut` / `mutableGet` | `hdht_mutable_put` / `hdht_mutable_get` |
 | DHT RPC | dht-rpc | `components/hdht` (C) |
@@ -85,7 +85,8 @@ These are the building blocks a product gets. Each is usable on its own.
 | Stream | `hdht_stream_write / end / destroy` | Ordered, reliable, encrypted messages, wire compatible with `@hyperswarm/secret-stream` | Done |
 | Records | `hdht_mutable_put / get` | A signed value of up to 1000 bytes stored on the ~20 DHT nodes closest to the key; anyone can read and verify it | Done |
 | Local channel | `components/hdht_ble`, `secret_stream.h` | The same SecretStream over BLE GATT (or any byte stream), keyed by the same identity | Done |
-| Topic discovery | Hyperswarm | Finding peers by topic instead of by key | Not yet |
+| Topic lookup | `hdht_lookup` | Finding peers announced under a topic, such as Hyperswarm servers; the replies are hints, authenticated by connecting | Done |
+| Topic announce | Hyperswarm | Being found by topic instead of by key | Not yet |
 | Relay fallback | blind-relay | Connections that cannot be holepunched | Not yet |
 
 ## Identity
@@ -216,7 +217,7 @@ There is no central server on the data path. Optional services sit beside it and
 | Connect | The device, as a buyer, connects to a remote seller by its key |
 | Stream | MER's BLE payment protocol (0xEE00) runs unchanged over the HyperDHT stream |
 | Records | Buyer and seller each publish a DID record binding their wallet. The buyer pays only the wallet in the seller's record; the seller accepts only payments signed by the wallet in the buyer's record |
-| Anchoring | Signed readings go to several open anchor nodes instead of one HashAnchor server. Each node batches, anchors on a permissionless contract and keeps a replicable log; receipts stay compatible with HashAnchor's verifier |
+| Anchoring | Signed readings go to several open anchor nodes, found by topic lookup, instead of one HashAnchor server ([operator guide](anchor-node.md)). Each node batches, anchors on a permissionless contract and keeps a replicable log; receipts stay compatible with HashAnchor's verifier |
 
 Measured on the public HyperDHT: 53 + 24 payment authorizations verified with none rejected, a seller billing the wrong wallet refused 4 of 4 times, records stored on 20 of 20 nodes. Details in its [README](../examples/boat_mer/README.md).
 
@@ -246,7 +247,7 @@ Known limits today, roughly in order of impact for products:
 |---|---|---|
 | No relay fallback | Peer pairs that cannot holepunch cannot connect | Implement blind-relay (`relayThrough`) |
 | Random NAT on the device side | Holepunching fails; hyperdht's 256-socket approach does not fit a C3 | Relay fallback covers it |
-| No topic discovery | Peers must already know the device's key | Hyperswarm topics (announce/lookup under a topic hash) |
+| No topic announce from the device | Peers must already know the device's key (the device can look topics up) | Announce under a topic hash, as hyperdht's announcer |
 | No admission | Any key can claim to be a device | Manufacturer credentials in the DID record, with a revocation list on a chain or an append-only log |
 | No key rotation | A new key is a new DID | A signed "moved to" record, or controller keys in the DID record |
 | No listing | The DHT looks up by key only | An indexer over records, e.g. a Hypercore/Hyperbee log written by the issuer |

@@ -66,7 +66,7 @@ hyperdht-esp32 让一块 ESP32-C3 模组成为 Holepunch 网络中的一个节�
 | 层 | Holepunch（JS） | 模组上 |
 |---|---|---|
 | 应用、存储 | Pear、Hypercore、Autobase | 不在设备上实现；对端可以运行 |
-| 按 topic 发现 | Hyperswarm | 暂未实现：对端按公钥直连设备 |
+| 按 topic 发现 | Hyperswarm | 查找：设备能找到在某个 topic 下宣告的对端（`hdht_lookup`）。设备自己不在 topic 下宣告，对端按公钥直连设备 |
 | 点对点连接 | hyperdht | `components/hdht`（C） |
 | 记录 | hyperdht `mutablePut` / `mutableGet` | `hdht_mutable_put` / `hdht_mutable_get` |
 | DHT RPC | dht-rpc | `components/hdht`（C） |
@@ -85,7 +85,8 @@ hyperdht-esp32 让一块 ESP32-C3 模组成为 Holepunch 网络中的一个节�
 | 流 | `hdht_stream_write / end / destroy` | 有序、可靠、加密的消息，与 `@hyperswarm/secret-stream` 线上兼容 | 已完成 |
 | 记录 | `hdht_mutable_put / get` | 最大 1000 字节的签名值，存在离该公钥最近的约 20 个 DHT 节点上，任何人都能读取并验证 | 已完成 |
 | 本地通道 | `components/hdht_ble`、`secret_stream.h` | 同样的 SecretStream 跑在 BLE GATT（或任意字节流）上，使用同一个身份 | 已完成 |
-| 按 topic 发现 | Hyperswarm | 按主题而不是按公钥找到对端 | 未实现 |
+| topic 查找 | `hdht_lookup` | 找到在某个 topic 下宣告的对端（如 Hyperswarm 服务端）；回复只是线索，连接时才认证 | 已完成 |
+| topic 宣告 | Hyperswarm | 让别人按主题而不是按公钥找到自己 | 未实现 |
 | 中继兜底 | blind-relay | 无法打洞时仍能连接 | 未实现 |
 
 ## 身份
@@ -216,7 +217,7 @@ DHT 不负责准入。任何密钥都能加入网络、宣告自己、发布记�
 | 连接 | 设备作为买方，按公钥连接远端卖方 |
 | 流 | MER 原本跑在 BLE 上的支付协议（0xEE00）原样跑在 HyperDHT 数据流上 |
 | 记录 | 买卖双方各自发布绑定钱包的 DID 记录。买方只向卖方记录里的钱包付款，卖方只接受由买方记录里的钱包签名的付款 |
-| 锚定 | 签名读数同时提交给多个开放锚定节点，而不是一台 HashAnchor 服务器。每个节点自行打包，在无权限合约上锚定，并保留一份可复制的日志；回执与 HashAnchor 的验证函数兼容 |
+| 锚定 | 签名读数同时提交给多个开放锚定节点（通过 topic 查找发现），而不是一台 HashAnchor 服务器（[节点运营指南](anchor-node.md)）。每个节点自行打包，在无权限合约上锚定，并保留一份可复制的日志；回执与 HashAnchor 的验证函数兼容 |
 
 在公共 HyperDHT 上的实测结果：
 - 支付授权共 53 + 24 笔通过验证，没有被拒的。
@@ -251,7 +252,7 @@ DHT 不负责准入。任何密钥都能加入网络、宣告自己、发布记�
 |---|---|---|
 | 没有中继兜底 | 无法打洞的组合连不上 | 实现 blind-relay（`relayThrough`） |
 | 设备侧是随机 NAT | 打洞失败；hyperdht 用 256 个 socket 的做法放不进 C3 | 由中继兜底覆盖 |
-| 没有按 topic 发现 | 对端必须事先知道设备公钥 | Hyperswarm topic（按主题哈希宣告和查找） |
+| 设备不能在 topic 下宣告 | 对端必须事先知道设备公钥（设备可以查找 topic） | 按 hyperdht 的 announcer 实现主题哈希宣告 |
 | 没有准入 | 任何密钥都能自称是设备 | 在 DID 记录里放制造商凭证，吊销列表放在区块链或只追加日志上 |
 | 不支持密钥轮换 | 换密钥就换了 DID | 签名的“迁移到”记录，或在 DID 记录里加入 controller 密钥 |
 | 不能列出设备 | DHT 只能按公钥查 | 在记录之上建索引，例如由发行方写入的 Hypercore/Hyperbee 日志 |

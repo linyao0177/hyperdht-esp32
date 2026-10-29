@@ -1,18 +1,25 @@
-// Compiles contracts/OpenAnchor.sol with Foundry and deploys it to a local
-// chain, such as `anvil`. Prints the contract address.
+// Compiles contracts/OpenAnchor.sol with Foundry and deploys it. Prints the
+// contract address.
 //
-// usage: node anchor-deploy.js [rpc url, default http://127.0.0.1:8545]
+// usage: node anchor-deploy.js [--network local | arc-testnet] [--rpc url] [--store dir]
 //
-// Uses anvil's first dev account, a well-known test key: never use it on a
-// real network.
+// --store  an anchor node store (anchor-node.js) whose wallet pays for the
+//          deployment; required on a public network
+//
+// On the local network without --store it uses anvil's first dev account, a
+// well-known test key: never use it on a real network.
 
 const { execFileSync } = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { JsonRpcProvider, Wallet, ContractFactory } = require('ethers')
+const { Wallet, ContractFactory, formatEther } = require('ethers')
+const { NETWORKS, provider, nodeKeys } = require('./open-anchor')
 
-const rpc = process.argv[2] || 'http://127.0.0.1:8545'
+const opts = {}
+for (let i = 2; i < process.argv.length; i++) opts[process.argv[i].replace(/^--/, '')] = process.argv[++i]
+const network = NETWORKS[opts.network || 'local']
+const rpc = opts.rpc || network.rpc
 const ANVIL_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 
 function compile () {
@@ -28,11 +35,18 @@ function compile () {
 }
 
 async function main () {
+  if (!opts.store && network !== NETWORKS.local) throw new Error('--store is required on a public network')
   const { abi, bytecode } = compile()
-  const wallet = new Wallet(ANVIL_KEY, new JsonRpcProvider(rpc))
+  const p = provider(rpc)
+  const wallet = new Wallet(opts.store ? nodeKeys(opts.store).walletKey : ANVIL_KEY, p)
+  console.log(`DEPLOY|from ${wallet.address} balance=${formatEther(await p.getBalance(wallet.address))}`)
   const contract = await new ContractFactory(abi, bytecode.object, wallet).deploy()
-  await contract.waitForDeployment()
-  console.log('DEPLOY|OpenAnchor', await contract.getAddress())
+  const rc = await contract.deploymentTransaction().wait()
+  console.log('DEPLOY|OpenAnchor', await contract.getAddress(), `tx=${rc.hash} block=${rc.blockNumber} gas=${rc.gasUsed}`)
+  process.exit(0)
 }
 
-main()
+main().catch((err) => {
+  console.error('DEPLOY|failed', err.shortMessage || err.message)
+  process.exit(1)
+})

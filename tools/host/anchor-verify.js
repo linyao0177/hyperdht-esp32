@@ -11,7 +11,7 @@
 //    names. That is usually the node's own; when several nodes built the same
 //    root, the first one's transaction counts for all of them.
 //
-// usage: node anchor-verify.js <bootstrap host:port | public> <node did> <device did> [--rpc http://127.0.0.1:8545]
+// usage: node anchor-verify.js <bootstrap host:port | public> <node did> <device did> [--network arc-testnet | local] [--rpc url]
 
 const os = require('os')
 const path = require('path')
@@ -21,30 +21,32 @@ const Hyperswarm = require('hyperswarm')
 const Corestore = require('corestore')
 const sodium = require('sodium-universal')
 const { MerkleTree } = require('merkletreejs')
-const { Contract, JsonRpcProvider, keccak256, verifyMessage } = require('ethers')
+const { Contract, keccak256 } = require('ethers')
+const { NETWORKS, ABI, provider, verifyRecord } = require('./open-anchor')
 
-const argv = process.argv.slice(2)
-const rpcIndex = argv.indexOf('--rpc')
-const rpc = rpcIndex >= 0 ? argv[rpcIndex + 1] : 'http://127.0.0.1:8545'
-const [where, nodeDid, deviceDid] = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--rpc')
+const positional = []
+const opts = {}
+for (let i = 2; i < process.argv.length; i++) {
+  const a = process.argv[i]
+  if (a.startsWith('--')) opts[a.slice(2)] = process.argv[++i]
+  else positional.push(a)
+}
+const [where, nodeDid, deviceDid] = positional
+const rpc = opts.rpc || NETWORKS[opts.network || 'arc-testnet'].rpc
 const bootstrap = where === 'public' ? undefined : [where]
 
 if (!/^did:mw:[0-9a-f]{64}$/.test(nodeDid || '') || !/^did:mw:[0-9a-f]{64}$/.test(deviceDid || '')) {
-  console.error('usage: node anchor-verify.js <bootstrap | public> <node did> <device did> [--rpc url]')
+  console.error('usage: node anchor-verify.js <bootstrap | public> <node did> <device did> [--network n] [--rpc url]')
   process.exit(1)
 }
 
-const ABI = ['function anchors(bytes32) view returns (uint64 timestamp, address anchorer)']
 const keccak = (b) => Buffer.from(keccak256(b).slice(2), 'hex')
 const hex = (b) => '0x' + b.toString('hex')
 
 async function resolve (dht, didStr) {
   const pk = Buffer.from(didStr.slice(7), 'hex')
   const res = await dht.mutableGet(pk)
-  if (!res) return null
-  const r = JSON.parse(res.value.toString())
-  if (r.did !== didStr || verifyMessage(r.did, r.eth_sig).toLowerCase() !== r.eth.toLowerCase()) return null
-  return r
+  return res && verifyRecord(pk, res.value)
 }
 
 async function main () {
@@ -70,7 +72,7 @@ async function main () {
   await core.update({ wait: true })
   console.log(`VERIFY|replicated batch log length=${core.length} ms=${Date.now() - started}`)
 
-  const contract = new Contract(node.contract, ABI, new JsonRpcProvider(rpc))
+  const contract = new Contract(node.contract, ABI, provider(rpc))
   const devicePk = Buffer.from(deviceDid.slice(7), 'hex')
   const totals = { pass: 0, fail: 0 }
 

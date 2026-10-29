@@ -8,8 +8,16 @@ config MER_SELLER_KEY
     string "HyperDHT public key (hex) of the seller to buy from, empty to only serve"
     default ""
 
+config MER_ANCHOR_CONTRACT
+    string "OpenAnchor contract whose anchor nodes to find and submit signed readings to, empty for none"
+    default ""
+
+config MER_ANCHOR_CHAIN_ID
+    int "Chain id of the OpenAnchor contract"
+    default 5042002
+
 config MER_ANCHOR_NODES
-    string "Anchor nodes to submit signed readings to: comma-separated HyperDHT public keys (hex), empty for none"
+    string "Extra anchor nodes to use without discovery: comma-separated HyperDHT public keys (hex)"
     default ""
 
 config MER_ANCHOR_INTERVAL_S
