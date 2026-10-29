@@ -2,6 +2,7 @@
 sdkconfig
 sdkconfig.old
 sdkconfig.wifi
+sdkconfig.secure-build
 
 # build output (also contains generated sdkconfig headers)
 build/
@@ -13,3 +14,7 @@ dependencies.lock
 node_modules/
 
 .DS_Store
+
+# secure boot signing keys never belong in the repo
+secure_boot_signing_key.pem
+*.pem

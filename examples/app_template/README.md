@@ -100,6 +100,7 @@ All peers here use [`tools/host/app-peer.js`](../../tools/host/app-peer.js). A p
 - **New commands** go in `on_session_data` in [`main/main.c`](main/main.c). Check `s->role` first.
 - **More roles**: grants carry a role in the text the owner signs, so adding one is a new word in that text and a new `role_t`.
 - **Commands from the owner that must reach the device while it sleeps or is offline**: publish them as a record under the owner's key and let the device read it on wake. The device can already read any record.
+- **Manufacturer credentials**: set `CONFIG_APP_ISSUER` to your issuer's DID. A peer can then hand the device a credential with `node tools/host/issuer.js issue <did> <model> --provision`. The device keeps it only if your issuer signed it for this device's key, and shows it in its record as `cred`, so apps can tell a genuine device from any other key: `node tools/host/app-peer.js resolve <did> --issuer <issuer did>`. See [docs/credentials.md](../../docs/credentials.md).
 - **Tamper-evident history**: send the readings' hashes to open anchor nodes as [`examples/boat_mer`](../boat_mer/README.md#distributed-anchoring) does. Each receipt then proves on chain when the device signed the reading.
 - **Payments**: [`examples/boat_mer`](../boat_mer) shows the device signing EIP-3009 payments with the same key.
 
@@ -113,7 +114,7 @@ All peers here use [`tools/host/app-peer.js`](../../tools/host/app-peer.js). A p
   - To revoke one reader only, add a revocation list to the owner's record.
 - **The record is public**: anyone can read it. Never put secrets in it.
 - **Replicas are readable by anyone who has the log key.** The key works as a capability, not as access control. For private data, encrypt the readings to the readers' keys, or use Hypercore's encryption.
-- **Keys at rest**: NVS is not encrypted here. A product should turn on flash encryption and NVS encryption, or keep the key in a secure element.
+- **Keys at rest**: NVS is not encrypted in the default build. [`sdkconfig.secure`](sdkconfig.secure) adds secure boot, flash encryption and NVS encryption for products. Its first boot burns eFuses for good; see [docs/key-protection.md](../../docs/key-protection.md). That configuration builds, but has not been run on a chip.
 
 ## Results (2026-10-29, ESP32-C3 on the public HyperDHT)
 

@@ -55,6 +55,8 @@ static uint8_t relay[32];
 static uint8_t topics[MAX_TOPICS][32];
 static size_t topics_len;
 
+static char cred[512]; // manufacturer credential JSON (docs/credentials.md), or empty
+
 static char hex[2 * HDHT_MUTABLE_MAX_VALUE + 1 > 2 * MAX_SEND + 1 ? 2 * HDHT_MUTABLE_MAX_VALUE + 1 : 2 * MAX_SEND + 1];
 static uint8_t bytes[HDHT_MUTABLE_MAX_VALUE > MAX_SEND ? HDHT_MUTABLE_MAX_VALUE : MAX_SEND];
 
@@ -506,6 +508,62 @@ cmd_allow (const char *args, bool query) {
   ok();
 }
 
+static bool
+valid_model (const char *m) {
+  size_t len = strlen(m);
+  if (len == 0 || len > 32) return false;
+  for (; *m; m++) {
+    if (!isalnum((unsigned char) *m) && *m != ' ' && *m != '.' && *m != '_' && *m != '-') return false;
+  }
+  return true;
+}
+
+// AT+CRED=<id>,<issuer did>,<iat>,<model>,<signature>: a credential for us
+static void
+cmd_cred (char *args) {
+  char *f[5];
+  int n = 0;
+  for (char *p = args; n < 5 && p; n++) {
+    f[n] = p;
+    p = strchr(p, ',');
+    if (p) *p++ = '\0';
+  }
+  uint8_t issuer[32], sig[64];
+  char *end;
+  unsigned long long iat = n == 5 ? strtoull(f[2], &end, 10) : 0;
+  if (n != 5 || strlen(f[0]) != 16 || *end != '\0' || !valid_model(f[3]) || !parse_key(f[1], issuer) || strlen(f[4]) != 128 || sodium_hex2bin(sig, 64, f[4], 128, NULL, NULL, NULL) != 0) {
+    error("expected id,issuer did,iat,model,signature");
+    return;
+  }
+  char iss[72];
+  did_of(issuer, iss);
+  if (CONFIG_MODULE_ISSUER[0] && strcmp(iss, CONFIG_MODULE_ISSUER) != 0) {
+    error("not from the trusted issuer");
+    return;
+  }
+  char text[220];
+  int len = snprintf(text, sizeof(text), "hdht-credential/1 %s %s %s %llu %s", f[0], iss + 7, did + 7, iat, f[3]);
+  if (crypto_sign_verify_detached(sig, (const uint8_t *) text, (size_t) len, issuer) != 0) {
+    error("bad signature");
+    return;
+  }
+
+  static char next[sizeof(cred)];
+  len = snprintf(next, sizeof(next), "{\"v\":1,\"id\":\"%s\",\"iss\":\"%s\",\"sub\":\"%s\",\"iat\":%llu,\"model\":\"%s\",\"sig\":\"%s\"}", f[0], iss, did, iat, f[3], f[4]);
+  if (len <= 0 || (size_t) len >= sizeof(next)) {
+    error("too long");
+    return;
+  }
+  memcpy(cred, next, (size_t) len + 1);
+  nvs_handle_t nvs;
+  if (nvs_open("module", NVS_READWRITE, &nvs) == ESP_OK) {
+    nvs_set_str(nvs, "cred", cred);
+    nvs_commit(nvs);
+    nvs_close(nvs);
+  }
+  ok();
+}
+
 static void
 cmd_links (void) {
   for (int i = 0; i < MAX_LINKS; i++) {
@@ -599,6 +657,26 @@ at_line (char *line) {
   }
   if (strcmp(name, "AT+ALLOW") == 0 && (set || query)) {
     cmd_allow(args, query);
+    return;
+  }
+  if (strcmp(name, "AT+CRED") == 0 && (set || query)) {
+    if (query) {
+      if (cred[0]) port_printf("+CRED:%s", cred);
+      ok();
+      return;
+    }
+    if (args[0]) {
+      cmd_cred(args);
+      return;
+    }
+    cred[0] = '\0';
+    nvs_handle_t nvs;
+    if (nvs_open("module", NVS_READWRITE, &nvs) == ESP_OK) {
+      nvs_erase_key(nvs, "cred");
+      nvs_commit(nvs);
+      nvs_close(nvs);
+    }
+    ok();
     return;
   }
   if (strcmp(name, "AT+LINKS") == 0) {
@@ -784,6 +862,8 @@ at_init (void) {
   has_relay = nvs_get_blob(nvs, "relay", relay, &len) == ESP_OK;
   len = sizeof(topics);
   if (nvs_get_blob(nvs, "topics", topics, &len) == ESP_OK) topics_len = len / 32;
+  len = sizeof(cred);
+  if (nvs_get_str(nvs, "cred", cred, &len) != ESP_OK) cred[0] = '\0';
   nvs_close(nvs);
 }
 

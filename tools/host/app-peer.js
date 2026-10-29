@@ -4,7 +4,8 @@
 // usage: node app-peer.js <command> [args] [--id name] [--bootstrap host:port]
 //
 //   whoami                                   this peer's DID (key kept in ~/.app-peer/<id>)
-//   resolve <device did>                     read and check the device's record
+//   resolve <device did> [--issuer did]      read and check the device's record, and its
+//                                            manufacturer credential against that issuer
 //   claim <device did> <setup code>          become the device's owner
 //   state <device did> [--grant file]        print the device's state
 //   set <device did> <key>=<value>           change a setting (owner)
@@ -27,6 +28,7 @@ const HyperDHT = require('hyperdht')
 const Hyperswarm = require('hyperswarm')
 const Corestore = require('corestore')
 const sodium = require('sodium-universal')
+const credential = require('./credential')
 
 const positional = []
 const opts = {}
@@ -138,6 +140,16 @@ const commands = {
   async resolve (dht, [did]) {
     const r = await resolve(dht, did)
     console.log(r ? JSON.stringify(r) : 'no valid record')
+    if (!r) return
+    if (opts.issuer) {
+      const v = await credential.verifyDevice(dht, did, [opts.issuer])
+      console.log(`credential: ${v.ok ? 'VALID' : 'INVALID'} ${v.reason}${v.issuer ? ` (issuer "${v.issuer.name}")` : ''}`)
+    } else if (r.cred) {
+      const bad = credential.check(r.cred, did)
+      console.log(`credential: ${bad || 'signed'} by ${r.cred.iss}, model "${r.cred.model}"; not trusted until you pass --issuer`)
+    } else {
+      console.log('credential: none')
+    }
   },
 
   async claim (dht, [did, code]) {

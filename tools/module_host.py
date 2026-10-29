@@ -32,7 +32,7 @@ RESULTS = {
     'AT+INFO': '+INFO', 'AT+ID': '+ID', 'AT+WIFI': '+WIFI', 'AT+HASH': '+HASH',
     'AT+SIGN': '+SIGN', 'AT+SIGNT': '+SIGN', 'AT+VERIFY': '+VERIFY', 'AT+ALLOW': '+ALLOW',
     'AT+LINKS': '+LINK', 'AT+LISTEN': '+LISTEN', 'AT+CONNECT': '+CONNECT',
-    'AT+PUT': '+RECORD', 'AT+PUTT': '+RECORD', 'AT+RELAY': '+RELAY', 'AT+ANNOUNCE': '+TOPIC',
+    'AT+PUT': '+RECORD', 'AT+PUTT': '+RECORD', 'AT+RELAY': '+RELAY', 'AT+ANNOUNCE': '+TOPIC', 'AT+CRED': '+CRED',
 }
 
 

@@ -9,6 +9,7 @@ Run with the ESP-IDF python env (pyserial, cryptography) and after
 """
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -113,6 +114,22 @@ def main(port):
     p = peer('get', did)
     rec = peer_line(p, 'record')
     check('JS peer reads the record', rec == f'record seq={seq} value={value}', rec or 'none')
+
+    # manufacturer credential (docs/credentials.md): issued for this module, kept
+    # by it, put in its record by the host, checked by an independent verifier
+    def issuer(*args):
+        return subprocess.run(['node', 'issuer.js', *args, '--name', 'module-test'], cwd=HOST, capture_output=True, text=True).stdout
+    issuer('init', 'Module Test Issuer')
+    c = json.loads(issuer('issue', did, 'meter X1').split('CREDENTIAL|')[1])
+    fields = f"{c['id']},{c['iss']},{c['iat']},{c['model']},{c['sig']}"
+    check('AT+CRED with a tampered model', errors_with(m, 'AT+CRED=' + fields.replace('meter X1', 'meter X9')) == 'ERROR:bad signature')
+    m.command('AT+CRED=' + fields)
+    kept = m.command('AT+CRED?')[0][6:]
+    check('AT+CRED? returns the credential', json.loads(kept) == c)
+    seq = m.command('AT+PUTT={"v":1,"svc":"meter/1","name":"test meter","cred":' + kept + '}')[0].split(':')[1]
+    m.wait_event('+PUT', timeout=60, match=lambda x: x.endswith(',' + seq))
+    verdict = issuer('verify', did).strip()
+    check('verifier accepts the module', 'VALID valid' in verdict, verdict.split(' id=')[0])
 
     # network peer: echo server announced under a topic
     server = peer('serve', 'uart-module-test')

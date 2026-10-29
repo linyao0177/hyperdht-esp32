@@ -12,5 +12,10 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/../../sdkconfig.wifi)
   list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/../../sdkconfig.wifi")
 endif()
 
+# Production hardening, only when asked for: -D APP_SECURE=1 (see sdkconfig.secure)
+if(APP_SECURE)
+  list(APPEND SDKCONFIG_DEFAULTS "sdkconfig.secure")
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(hdht_app_template)

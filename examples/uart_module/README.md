@@ -47,7 +47,7 @@ With the default USB port, the module's logs go to UART0 (GPIO21) so they never 
 
 ## Results (2026-10-29, ESP32-C3 on the public HyperDHT)
 
-`module_test.py` passed all 45 checks on firmware 0.2 (and all 35–36 of the earlier version in its last three runs):
+`module_test.py` passed all 48 checks on firmware 0.3 (and all 45 on 0.2, and 35–36 on the first version in its last three runs):
 
 | | Result |
 |---|---|
@@ -59,12 +59,13 @@ With the default USB port, the module's logs go to UART0 (GPIO21) so they never 
 | Stuck peer | A peer that never ended its side was closed 5 s after `AT+CLOSE` (`+CLOSED:0,-12`) |
 | Inbound | After `AT+LISTEN=1`, a Node.js peer connected by DID. Its message arrived as `+DATA`, and the host's `AT+SENDT` reply reached it |
 | Allow list | A peer missing from the list got `+DENIED:...,not allowed`. Clearing the list opened it again |
+| Credential | `AT+CRED` refused a credential whose model was changed after signing, and accepted the genuine one. The host published it in its record, and `issuer.js verify` returned VALID |
 | Relay | With `AT+RELAY` set to a blind-relay node on the computer, an outbound link to a Node.js server and an inbound link from a Node.js client both ran through the relay. Both peers saw the relay's address (192.168.31.152:49738), not the module's, and data went both ways |
 | Announce | `AT+ANNOUNCE` was stored on 20 nodes in 4–7 s, and a Node.js lookup found the module on 19 nodes. `AT+ANNOUNCE=` then unannounced it from all of them |
 | Errors | Unknown command, bad DID, bad hex, a send on a closed link, and a 2408-character line (`ERROR:line too long`) were all reported, and the module kept working |
 | WiFi | `AT+WIFI` to a missing network gave `+NET:DISCONNECTED` at once. `AT+WIFI=` reconnected to the default network in 2 s, and the DHT worked again right away |
 | Free heap | ~146 KB idle, ~154 KB with one link open (the reading varies with WiFi buffers) |
-| Image | 1.03 MB (0x108290); 30% of the app partition free |
+| Image | 1.03 MB (0x108650); 30% of the app partition free |
 
 Connects to peers that had started seconds earlier failed 5 times in 22 attempts during testing: four with -100 (peer not found), and one with no `+CONN` within 60 s. Every retry worked. The test now retries once, as a host should; see [host notes](../../docs/module-uart.md#host-notes).
 

@@ -9,7 +9,7 @@
 
 #include "hdht.h"
 
-#define MODULE_VERSION "hdht-module/0.2"
+#define MODULE_VERSION "hdht-module/0.3"
 
 extern uv_loop_t loop;
 extern hdht_t dht;

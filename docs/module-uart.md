@@ -2,7 +2,7 @@
 
 [`examples/uart_module`](../examples/uart_module) turns the ESP32-C3 into a network module. A host MCU uses it the way it would use an AT-command WiFi module: one text command per line over a serial port. The module handles WiFi, its identity, peer-to-peer connections by DID, signed records and topic lookup. The host needs no network stack and no cryptography of its own.
 
-Version: `hdht-module/0.2`.
+Version: `hdht-module/0.3`.
 
 ## Wiring
 
@@ -54,6 +54,9 @@ Commands marked **DHT** in the tables below answer `ERROR:not ready` until `+REA
 | `AT+SIGN=<hex>` / `AT+SIGNT=<text>` | `+SIGN:<signature hex>` | Ed25519 with the module's key, up to 1024 bytes. Anyone can verify it against the DID |
 | `AT+VERIFY=<did>,<hex>,<signature hex>` | `+VERIFY:<1/0>` | |
 | `AT+HASH=<text>` | `+HASH:<hex>` | BLAKE2b-256, for example to make a topic from a name |
+| `AT+CRED=<id>,<issuer did>,<iat>,<model>,<signature>` | — | Stores a manufacturer credential for this module ([credentials.md](credentials.md)) after checking its signature, that it is for this module's key, and, if `CONFIG_MODULE_ISSUER` is set, the issuer. Kept in NVS |
+| `AT+CRED?` | `+CRED:<credential JSON>`, or nothing | Put it in your record as `"cred":<JSON>` with `AT+PUTT`, so verifiers find it |
+| `AT+CRED=` | — | Forgets it |
 
 ### Connections
 
@@ -147,5 +150,5 @@ The host is a meter. It publishes what it is, waits for its operator's app to co
 - **Retry connects, and time them out.** A connect can fail with `+CLOSED:<link>,-100` (peer not found), most often right after the peer starts, before its announcement has spread. In the test runs, 5 of 22 connects to peers started seconds earlier failed: four with -100, and one that gave no `+CONN` within 60 s. Every retry worked.
 - **Network operations take seconds.** In the test runs, a connect took about 3 s, a record put 4–10 s, and a get about 5 s. Do not block the host's main loop waiting for them.
 - **One command at a time.** Wait for `OK` or `ERROR`. The module queues up to 4 lines and answers `ERROR:busy` beyond that.
-- **The module keeps the identity, network, allow list, record, topics and relay across restarts.** Listening does not persist: send `AT+LISTEN=1` after each boot.
+- **The module keeps the identity, network, allow list, record, topics, relay and credential across restarts.** Listening does not persist: send `AT+LISTEN=1` after each boot.
 - **Signing is the module's key, not the host's.** What it proves is that this module produced the signature. Data the host feeds in is only as trustworthy as the host and its wiring.

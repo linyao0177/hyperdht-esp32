@@ -251,7 +251,8 @@ Known limits today, roughly in order of impact for products:
 |---|---|---|
 | Relays must be run | A device behind a random NAT needs a blind-relay node with a public address; there is no public service yet | Run relay nodes, and let devices find them by topic |
 | Relayed connections stay relayed | Traffic keeps going through the relay even when a direct path would work | Upgrade to direct after a later holepunch, as hyperdht does |
-| No admission | Any key can claim to be a device | Manufacturer credentials in the DID record, with a revocation list on a chain or an append-only log |
+| Admission is checked in JavaScript only | Manufacturer credentials and revocation work ([credentials.md](credentials.md)), but devices cannot yet check each other's | The same check in C, and revocation lists in an append-only log for large fleets |
+| Key protection not run on a chip | Secure boot, flash and NVS encryption are configured and build ([key-protection.md](key-protection.md)) but burn eFuses, so they have not been tried | Run on spare boards, including signed OTA |
 | No key rotation | A new key is a new DID | A signed "moved to" record, or controller keys in the DID record |
 | No listing | The DHT looks up by key only | An indexer over records, e.g. a Hypercore/Hyperbee log written by the issuer |
 | Untested with Pear/Hyperswarm apps | Expected to work through `swarm.joinPeer(publicKey)`, which uses the same connect path | Test and document |

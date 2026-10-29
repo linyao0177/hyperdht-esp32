@@ -4,6 +4,13 @@ config APP_NAME
     string "Device name, published in its record (no quotes)"
     default "app-template"
 
+config APP_ISSUER
+    string "Manufacturer whose credentials the device accepts (did:mw:<hex>), empty for none"
+    default ""
+    help
+        See docs/credentials.md. Anyone may hand the device a credential;
+        it keeps one only if this issuer signed it for this device's key.
+
 config APP_BOOTSTRAP
     string "Bootstrap node (ip:port), empty for the public HyperDHT"
     default ""

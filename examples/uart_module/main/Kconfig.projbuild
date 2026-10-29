@@ -31,6 +31,10 @@ config MODULE_UART_BAUD
     depends on MODULE_PORT_UART
     default 115200
 
+config MODULE_ISSUER
+    string "Only accept manufacturer credentials from this issuer (did:mw:<hex>), empty for any"
+    default ""
+
 config MODULE_BOOTSTRAP
     string "Bootstrap node (ip:port), empty for the public HyperDHT"
     default ""

@@ -28,13 +28,21 @@
 //   {"t":"set","key","value"}                  -> {"t":"ok"}                 owner
 //   {"t":"revoke"}                             -> {"t":"ok","epoch"}         owner: ends every grant
 //   {"t":"release"}                            -> {"t":"ok"}                 owner: back to unclaimed
+//   {"t":"provision","id","iss","iat","model","sig"}  -> {"t":"ok"}         anyone: a manufacturer
+//                                                credential for this device (docs/credentials.md)
 //   errors: {"t":"error","reason"}
+//
+// A credential is the issuer's signature of
+//   "hdht-credential/1 <id> <issuer key hex> <device key hex> <iat> <model>"
+// and is kept only when the issuer is CONFIG_APP_ISSUER. It goes into the
+// record as "cred", so anyone who resolves the device can check it.
 //
 // A grant is the owner's Ed25519 signature of the text
 //   "app-template/grant/1 <device key hex> <grantee key hex> read <epoch> <exp>"
 // The device fills in its own key and the connecting peer's, so a grant works
 // only for that device and that peer.
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,6 +94,7 @@ static uint8_t owner[32];
 static char code[10]; // XXXX-XXXX while unclaimed
 static uint32_t epoch, boot;
 static uint64_t record_seq;
+static char cred[512]; // the credential's JSON, or empty
 
 static session_t sessions[MAX_SESSIONS];
 static uint32_t readings, attempts;
@@ -139,6 +148,8 @@ load_state (void) {
   if (nvs_get_str(nvs, "code", code, &len) != ESP_OK) new_code();
   nvs_get_u32(nvs, "epoch", &epoch);
   nvs_get_u64(nvs, "rec_seq", &record_seq);
+  len = sizeof(cred);
+  if (nvs_get_str(nvs, "cred", cred, &len) != ESP_OK) cred[0] = '\0';
   nvs_get_u32(nvs, "boot", &boot);
   nvs_set_u32(nvs, "boot", ++boot);
   nvs_commit(nvs);
@@ -202,7 +213,7 @@ build_record (char *out, size_t cap) {
     sodium_bin2hex(owner_hex + 1, 65, owner, 32);
     strcat(owner_hex, "\"");
   }
-  return snprintf(out, cap, "{\"v\":1,\"did\":\"%s\",\"svc\":\"%s\",\"name\":\"%s\",\"owner\":%s,\"epoch\":%lu}", did, APP_SERVICE, CONFIG_APP_NAME, owner_hex, (unsigned long) epoch);
+  return snprintf(out, cap, "{\"v\":1,\"did\":\"%s\",\"svc\":\"%s\",\"name\":\"%s\",\"owner\":%s,\"epoch\":%lu%s%s}", did, APP_SERVICE, CONFIG_APP_NAME, owner_hex, (unsigned long) epoch, cred[0] ? ",\"cred\":" : "", cred);
 }
 
 static void
@@ -222,7 +233,7 @@ on_record_put (hdht_t *d, int status, unsigned stored, void *data) {
 
 static void
 publish_record (void) {
-  static char record[320];
+  static char record[900];
   int len = build_record(record, sizeof(record));
   if (len <= 0 || (size_t) len >= sizeof(record)) return;
   if (hdht_mutable_put(&dht, pk, sk, record_seq, (const uint8_t *) record, (size_t) len, on_record_put, NULL) != 0) printf("APP|record put failed to start\n");
@@ -383,6 +394,59 @@ on_hello (session_t *s, const char *json) {
   reply(s, "{\"t\":\"role\",\"role\":\"read\"}");
 }
 
+static bool
+valid_model (const char *m) {
+  size_t len = strlen(m);
+  if (len == 0 || len > 32) return false;
+  for (; *m; m++) {
+    if (!isalnum((unsigned char) *m) && *m != ' ' && *m != '.' && *m != '_' && *m != '-') return false;
+  }
+  return true;
+}
+
+// A manufacturer credential: self-authenticating, so any peer may deliver it.
+static void
+on_provision (session_t *s, const char *json) {
+  char id[20], iss[80], model[40], sig_hex[136];
+  uint64_t iat;
+  uint8_t issuer[32], sig[64];
+  if (CONFIG_APP_ISSUER[0] == '\0') {
+    send_error(s, "provisioning disabled: no issuer in the firmware");
+    return;
+  }
+  if (!json_str(json, "id", id, sizeof(id)) || strlen(id) != 16 || !json_str(json, "iss", iss, sizeof(iss)) || !json_u64(json, "iat", &iat) || !json_str(json, "model", model, sizeof(model)) || !valid_model(model) || !json_str(json, "sig", sig_hex, sizeof(sig_hex)) || sodium_hex2bin(sig, 64, sig_hex, strlen(sig_hex), NULL, NULL, NULL) != 0) {
+    send_error(s, "malformed credential");
+    return;
+  }
+  if (strcmp(iss, CONFIG_APP_ISSUER) != 0 || strlen(iss) != 71 || sodium_hex2bin(issuer, 32, iss + 7, 64, NULL, NULL, NULL) != 0) {
+    send_error(s, "not from the trusted issuer");
+    return;
+  }
+
+  char text[220];
+  int len = snprintf(text, sizeof(text), "hdht-credential/1 %s %s %s %llu %s", id, iss + 7, did + 7, (unsigned long long) iat, model);
+  if (crypto_sign_verify_detached(sig, (const uint8_t *) text, (size_t) len, issuer) != 0) {
+    send_error(s, "bad signature");
+    return;
+  }
+
+  // built aside: a credential that does not fit leaves the current one alone
+  static char next[sizeof(cred)];
+  int n = snprintf(next, sizeof(next), "{\"v\":1,\"id\":\"%s\",\"iss\":\"%s\",\"sub\":\"%s\",\"iat\":%llu,\"model\":\"%s\",\"sig\":\"%s\"}", id, iss, did, (unsigned long long) iat, model, sig_hex);
+  if (n <= 0 || (size_t) n >= sizeof(next)) {
+    send_error(s, "malformed credential");
+    return;
+  }
+  memcpy(cred, next, (size_t) n + 1);
+  nvs_handle_t nvs = store_open();
+  nvs_set_str(nvs, "cred", cred);
+  nvs_commit(nvs);
+  nvs_close(nvs);
+  record_changed();
+  printf("APP|credential %s model=\"%s\" from %.23s...\n", id, model, iss);
+  reply(s, "{\"t\":\"ok\"}");
+}
+
 static void
 on_get (session_t *s) {
   char settings[160], msg[512];
@@ -457,6 +521,7 @@ on_session_data (hdht_stream_t *stream, const uint8_t *data, size_t len) {
 
   if (strcmp(t, "claim") == 0) on_claim(s, json);
   else if (strcmp(t, "hello") == 0) on_hello(s, json);
+  else if (strcmp(t, "provision") == 0) on_provision(s, json);
   else if (strcmp(t, "get") == 0 && can_read) on_get(s);
   else if (strcmp(t, "subscribe") == 0 && can_read) {
     s->subscribed = true;
@@ -510,6 +575,7 @@ on_listening (hdht_server_t *srv, int status) {
   first = false;
   printf("APP|device %s\n", did);
   if (!claimed) printf("APP|unclaimed; setup code: %s\n", code);
+  printf("APP|%s%s\n", cred[0] ? "credential " : "no manufacturer credential", cred);
 
   if (record_seq == 0) record_seq = 1;
   publish_record();

@@ -1,0 +1,32 @@
+# Production hardening for a device that keeps a private key: secure boot,
+# flash encryption and NVS encryption. Read docs/key-protection.md first.
+#
+# Firmware built with this burns eFuses on its first boot. That cannot be
+# undone: the chip then runs only firmware signed with your key, and its flash
+# can no longer be read or reflashed in plain text.
+#
+#   idf.py -D APP_SECURE=1 -B build-secure -D SDKCONFIG=sdkconfig.secure-build build
+
+# Secure boot v2 (RSA-3072 on the C3): the bootloader checks the app's signature
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+
+# Flash encryption, release mode: flash contents, including NVS keys, are
+# encrypted with a key that never leaves the chip; JTAG is disabled
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+
+# NVS encryption: the device key seed, owner and credential are encrypted
+# with keys kept in the encrypted nvs_keys partition
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y
+
+# The serial bootloader can still write signed images, but not read flash
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y
+
+# A signed bootloader is 48 KB: the partition table moves up to leave it room
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_secure.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x10000
