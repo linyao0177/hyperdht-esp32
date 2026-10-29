@@ -11,6 +11,7 @@ set(HDHT_SOURCES
   src/hdht.c
   src/holepunch.c
   src/messages.c
+  src/mutable.c
   src/noise.c
   src/secret_stream.c
   src/server.c
@@ -74,6 +75,9 @@ target_link_libraries(test_server hdht)
 
 add_executable(test_ss test/test_ss.c)
 target_link_libraries(test_ss hdht)
+
+add_executable(test_mutable test/test_mutable.c)
+target_link_libraries(test_mutable hdht)
 
 enable_testing()
 add_test(NAME vectors COMMAND test_vectors)

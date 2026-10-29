@@ -9,6 +9,12 @@
 //   HyperDHT stream instead of BLE GATT. It reads the seller's power, opens a
 //   paying stream, validates every slice and signs an EIP-3009 authorization
 //   for it on the device. Nothing is settled here; the seller only verifies.
+// - DID record: the device publishes {"v":1,"did","eth","eth_sig"} as a
+//   HyperDHT mutable record under its DID key. eth_sig is an EIP-191 signature
+//   of the DID by the device's secp256k1 key, so the record binds the DID and
+//   the wallet both ways, and anyone can check it without a registry. Before
+//   paying, the buyer reads the seller's record and only accepts slices whose
+//   payee is the seller's own wallet.
 //
 // Wire: each HyperDHT message carries one GATT operation of MER's 0xEE00
 // protocol, unchanged:
@@ -16,6 +22,7 @@
 // op 1 = write, 2 = read, 3 = read result (value = status byte + data),
 // 4 = notify. tools/host/mer-seller.js is the other end.
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -42,10 +49,21 @@ enum {
 
 #define MAX_VALUE 512 // the 0xEE04 proof JSON is ~400 bytes
 
+#define RECORD_REPUBLISH_S 1800 // nodes keep mutable records for up to 48 hours
+
 static uv_loop_t loop;
 static hdht_t dht;
 static hdht_server_t server;
 static boat_keypair_t kp;
+
+static char record[320]; // our DID record (283 bytes), the same bytes on every boot
+static size_t record_len;
+static uint64_t record_seq; // 0 until we know the seq stored in the DHT
+static bool record_published;
+static int64_t record_started;
+
+static uint8_t payee[20]; // the seller's wallet, from its DID record
+static uint32_t payee_rejects;
 
 static boat_buyer_ctx_t buyer; // ~33 KB (replay-guard set): must be static
 static hdht_stream_t seller;
@@ -60,6 +78,109 @@ static int64_t notify_started;
 static void
 log_heap (const char *at) {
   printf("MER|heap at=%s free=%u min=%u largest=%u stack_free=%u\n", at, (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT), (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), (unsigned) uxTaskGetStackHighWaterMark(NULL));
+}
+
+// DID record
+
+// keccak256("\x19Ethereum Signed Message:\n" + len + msg), as personal_sign
+static void
+eip191_digest (const char *msg, uint8_t out[32]) {
+  char buf[128];
+  int n = snprintf(buf, sizeof(buf), "\x19"
+                                     "Ethereum Signed Message:\n%u%s",
+                   (unsigned) strlen(msg), msg);
+  boat_keccak256((const uint8_t *) buf, (size_t) n, out);
+}
+
+static void
+build_record (void) {
+  uint8_t digest[32], sig[65];
+  eip191_digest(kp.did, digest);
+  int64_t t0 = esp_timer_get_time();
+  boat_secp256k1_sign(&kp, digest, sig);
+  long ms = (long) ((esp_timer_get_time() - t0) / 1000);
+
+  char sig_hex[131];
+  boat_bytes_to_hex(sig, 65, sig_hex);
+  int n = snprintf(record, sizeof(record), "{\"v\":1,\"did\":\"%s\",\"eth\":\"%s\",\"eth_sig\":\"0x%s\"}", kp.did, kp.eth_addr_hex, sig_hex);
+  record_len = n > 0 && (size_t) n < sizeof(record) ? (size_t) n : 0;
+  printf("MER|record built len=%u eth_sign_ms=%ld\n", (unsigned) record_len, ms);
+}
+
+// Copies the string value of "key" from a flat JSON object.
+static bool
+json_str (const char *json, const char *key, char *out, size_t cap) {
+  char pattern[24];
+  snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
+  const char *p = strstr(json, pattern);
+  if (p == NULL) return false;
+  p += strlen(pattern);
+  const char *end = strchr(p, '"');
+  if (end == NULL || (size_t) (end - p) >= cap) return false;
+  memcpy(out, p, end - p);
+  out[end - p] = '\0';
+  return true;
+}
+
+// Checks that a DID record belongs to public_key and that its eth_sig was made
+// by its eth address; returns that address.
+static bool
+verify_record (const uint8_t public_key[32], const uint8_t *value, size_t len, uint8_t eth[20]) {
+  static char json[HDHT_MUTABLE_MAX_VALUE + 1]; // off the loop task's stack
+  memcpy(json, value, len);
+  json[len] = '\0';
+
+  char did[80], expected[80], eth_hex[48], sig_hex[136];
+  char hex[65];
+  sodium_bin2hex(hex, sizeof(hex), public_key, 32);
+  snprintf(expected, sizeof(expected), "did:mw:%s", hex);
+  if (!json_str(json, "did", did, sizeof(did)) || strcmp(did, expected) != 0) return false;
+  if (!json_str(json, "eth", eth_hex, sizeof(eth_hex)) || !json_str(json, "eth_sig", sig_hex, sizeof(sig_hex))) return false;
+
+  uint8_t sig[65], claimed[20], recovered[20], digest[32];
+  if (boat_hex_to_bytes(eth_hex, claimed, 20) != 20 || boat_hex_to_bytes(sig_hex, sig, 65) != 65) return false;
+  eip191_digest(did, digest);
+  if (boat_secp256k1_ecrecover(digest, sig, recovered) != BOAT_OK) return false;
+  if (memcmp(recovered, claimed, 20) != 0) return false;
+
+  memcpy(eth, claimed, 20);
+  return true;
+}
+
+static void
+resolve_seller (void);
+
+static void
+on_record_put (hdht_t *d, int status, unsigned stored, void *data) {
+  (void) d;
+  (void) data;
+  printf("MER|record put status=%d stored=%u seq=%llu ms=%ld\n", status, stored, (unsigned long long) record_seq, (long) ((esp_timer_get_time() - record_started) / 1000));
+  if (status == HDHT_MUTABLE_ESEQ_TOO_LOW || status == HDHT_MUTABLE_ESEQ_REUSED) record_seq = 0; // look again next time
+
+  // connect as a buyer once our own record is out, so the seller can check us
+  bool first = !record_published;
+  record_published = true;
+  if (first && has_seller) resolve_seller();
+}
+
+static void
+on_own_record (hdht_t *d, int status, uint64_t seq, const uint8_t *value, size_t len, void *data) {
+  (void) data;
+  // republish the stored seq if the record is unchanged, otherwise replace it
+  if (status == 0) record_seq = len == record_len && memcmp(value, record, len) == 0 ? seq : seq + 1;
+  else record_seq = 1;
+  printf("MER|record lookup status=%d seq=%llu ms=%ld\n", status, (unsigned long long) record_seq, (long) ((esp_timer_get_time() - record_started) / 1000));
+  if (hdht_mutable_put(d, kp.ed25519_pk, kp.ed25519_sk, record_seq, (const uint8_t *) record, record_len, on_record_put, NULL) != 0) on_record_put(d, HDHT_ENOMEM, 0, NULL);
+}
+
+static void
+publish_record (void) {
+  if (record_len == 0) return;
+  record_started = esp_timer_get_time();
+  int err = record_seq
+              ? hdht_mutable_put(&dht, kp.ed25519_pk, kp.ed25519_sk, record_seq, (const uint8_t *) record, record_len, on_record_put, NULL)
+              : hdht_mutable_get(&dht, kp.ed25519_pk, 0, on_own_record, NULL);
+  if (err) printf("MER|record publish failed %d\n", err);
 }
 
 // server: answer a DID dial with an attested reading
@@ -187,6 +308,18 @@ on_seller_data (hdht_stream_t *s, const uint8_t *data, size_t len) {
 
   switch (data[0]) {
   case OP_NOTIFY:
+    // pay only the wallet the seller's DID record names
+    if (uuid16 == BOAT_NANO_CHR_SLICE_REQUEST && len - 3 >= sizeof(boat_nano_slice_request_v2_t)) {
+      const uint8_t *to = data + 3 + offsetof(boat_nano_slice_request_v2_t, to_address);
+      if (memcmp(to, payee, 20) != 0) {
+        char got[41], want[41];
+        sodium_bin2hex(got, sizeof(got), to, 20);
+        sodium_bin2hex(want, sizeof(want), payee, 20);
+        printf("MER|payee mismatch to=0x%s record=0x%s rejects=%u: not signing, disconnecting\n", got, want, (unsigned) ++payee_rejects);
+        hdht_stream_destroy(&seller, HDHT_STREAM_ECLOSED);
+        return;
+      }
+    }
     notify_started = esp_timer_get_time();
     boat_buyer_on_notify(&buyer, uuid16, data + 3, len - 3);
     break;
@@ -219,7 +352,6 @@ on_seller_close (hdht_stream_t *s, int error) {
 
 static void
 connect_seller (void) {
-  seller_busy = true;
   int err = hdht_connect(&dht, &seller, seller_key, on_seller_open, on_seller_data, on_seller_close, NULL);
   if (err) {
     printf("MER|connect failed %d\n", err);
@@ -227,21 +359,58 @@ connect_seller (void) {
   }
 }
 
+static int64_t resolve_started;
+
+static void
+on_seller_record (hdht_t *d, int status, uint64_t seq, const uint8_t *value, size_t len, void *data) {
+  (void) d;
+  (void) data;
+  long lookup_ms = (long) ((esp_timer_get_time() - resolve_started) / 1000);
+  if (status != 0) {
+    printf("MER|seller record status=%d lookup_ms=%ld: not connecting\n", status, lookup_ms);
+    seller_busy = false;
+    ticks_down = 0;
+    return;
+  }
+
+  int64_t t0 = esp_timer_get_time();
+  bool ok = verify_record(seller_key, value, len, payee);
+  long verify_ms = (long) ((esp_timer_get_time() - t0) / 1000);
+  char hex[41];
+  sodium_bin2hex(hex, sizeof(hex), payee, 20);
+  printf("MER|seller record seq=%llu valid=%s payee=0x%s lookup_ms=%ld verify_ms=%ld\n", (unsigned long long) seq, ok ? "yes" : "no", ok ? hex : "-", lookup_ms, verify_ms);
+  if (!ok) {
+    seller_busy = false;
+    ticks_down = 0;
+    return;
+  }
+  connect_seller();
+}
+
+// look up the seller's DID record (its payee) before every connection
+static void
+resolve_seller (void) {
+  seller_busy = true;
+  resolve_started = esp_timer_get_time();
+  if (hdht_mutable_get(&dht, seller_key, 0, on_seller_record, NULL) != 0) seller_busy = false;
+}
+
 // once a second: the engine's watchdog and power self-drive, reconnects, heap log
 static void
 on_tick (uv_timer_t *t) {
   (void) t;
   if (seller_up) boat_buyer_tick(&buyer);
-  else if (has_seller && !seller_busy && ++ticks_down >= 5) connect_seller();
+  else if (has_seller && record_published && !seller_busy && ++ticks_down >= 5) resolve_seller();
 
   if (++ticks % 30 == 0) log_heap("tick");
+  if (ticks % RECORD_REPUBLISH_S == 0) publish_record();
 }
 
 static void
 on_ready (hdht_t *d, int status) {
   printf("MER|bootstrapped status=%d nodes=%u\n", status, d->table_len);
   hdht_listen(d, &server, kp.ed25519_pk, kp.ed25519_sk, on_peer_connection, on_listening, NULL);
-  if (has_seller) connect_seller();
+  publish_record(); // the buyer starts once it is out
 }
 
 static void
@@ -261,6 +430,7 @@ hdht_task (void *arg) {
   hdht_keypair(pk, sk, kp.ed25519_sk);
   printf("MER|keycheck same_keypair=%s\n", memcmp(pk, kp.ed25519_pk, 32) == 0 && memcmp(sk, kp.ed25519_sk, 64) == 0 ? "yes" : "no");
   sodium_memzero(sk, sizeof(sk));
+  build_record();
 
   has_seller = sodium_hex2bin(seller_key, 32, CONFIG_MER_SELLER_KEY, strlen(CONFIG_MER_SELLER_KEY), NULL, NULL, NULL) == 0 && strlen(CONFIG_MER_SELLER_KEY) == 64;
   if (has_seller) {

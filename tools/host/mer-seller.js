@@ -5,13 +5,23 @@
 // switches on and off, and verifies every EIP-3009 authorization the board
 // signs, the way a settlement service would. Nothing is submitted on-chain.
 //
-// usage: node mer-seller.js <bootstrap host:port | public> [seconds, default 150]
+// It publishes its DID record ({"v":1,"did","eth","eth_sig"}, a HyperDHT
+// mutable record under its key) so buyers can check the payee, and reads each
+// buyer's record to check that the payments are signed by the buyer DID's own
+// wallet.
+//
+// usage: node mer-seller.js <bootstrap host:port | public> [seconds, default 150] [--wrong-payee]
+//
+// --wrong-payee  bill to a wallet other than the one in the DID record (the
+//                board should refuse to sign)
 
 const crypto = require('crypto')
 const HyperDHT = require('hyperdht')
-const { Wallet, verifyTypedData } = require('ethers')
+const { Wallet, verifyMessage, verifyTypedData } = require('ethers')
 
-const [where = 'public', seconds = '150'] = process.argv.slice(2)
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--'))
+const wrongPayee = process.argv.includes('--wrong-payee')
+const [where = 'public', seconds = '150'] = args
 const bootstrap = where === 'public' ? undefined : [where]
 
 const OP_WRITE = 1
@@ -51,9 +61,19 @@ const types = {
 
 const keyPair = HyperDHT.keyPair(Buffer.alloc(32, 0x44))
 const wallet = new Wallet('0x' + Buffer.alloc(32, 0x45).toString('hex')) // receives the payments
+const billTo = wrongPayee ? new Wallet('0x' + Buffer.alloc(32, 0x46).toString('hex')).address : wallet.address
 const USDC = Buffer.from('3600000000000000000000000000000000000000', 'hex') // Arc testnet
 
 const totals = { verified: 0, failed: 0, micro: 0 }
+
+// A DID record is valid when its did is the key it is stored under and its
+// eth_sig (EIP-191 over the did) recovers to its eth address.
+function verifyRecord (publicKey, value) {
+  const r = JSON.parse(value.toString())
+  if (r.did !== 'did:mw:' + publicKey.toString('hex')) return null
+  if (verifyMessage(r.did, r.eth_sig).toLowerCase() !== r.eth.toLowerCase()) return null
+  return r
+}
 
 function frame (op, uuid16, value = Buffer.alloc(0)) {
   const head = Buffer.from([op, uuid16 & 0xff, uuid16 >> 8])
@@ -65,9 +85,17 @@ function powerDw (startedAt) {
   return t < POWER_ON_S ? 120 : 0
 }
 
-function serve (conn) {
+function serve (conn, dht) {
   const buyerDid = 'did:mw:' + conn.remotePublicKey.toString('hex')
   console.log('SELLER|buyer connected', buyerDid.slice(0, 23) + '...')
+
+  let buyerEth = null // from the buyer's DID record
+  const lookupStarted = Date.now()
+  dht.mutableGet(conn.remotePublicKey).then((res) => {
+    const r = res && verifyRecord(conn.remotePublicKey, res.value)
+    buyerEth = r ? r.eth.toLowerCase() : null
+    console.log(`SELLER|buyer record ${res ? 'seq=' + res.seq : 'not found'} valid=${r ? 'yes' : 'no'} eth=${r ? r.eth : '-'} lookup_ms=${Date.now() - lookupStarted}`)
+  }).catch((err) => console.log('SELLER|buyer record lookup failed', err.message))
 
   const startedAt = Date.now()
   let heartbeat = 0
@@ -117,7 +145,7 @@ function serve (conn) {
     b.writeUInt32LE(0, 4)
     b.writeUInt32LE(now + 7 * 24 * 3600, 8)
     nonce.copy(b, 12)
-    Buffer.from(wallet.address.slice(2), 'hex').copy(b, 44)
+    Buffer.from(billTo.slice(2), 'hex').copy(b, 44)
     b.writeBigUInt64LE(BigInt(amount), 64)
     b.writeUInt32LE(wh, 72)
     b.writeUInt32LE(Math.round(avgW * 1000), 76)
@@ -133,9 +161,11 @@ function serve (conn) {
     pending.delete(p.nonce.slice(2))
     const message = { from: p.from, to: p.to, value: BigInt(p.value), validAfter: p.validAfter, validBefore: p.validBefore, nonce: p.nonce }
     const signer = verifyTypedData(domain, types, message, p.sig)
+    const bound = buyerEth === null ? 'unknown' : signer.toLowerCase() === buyerEth ? 'yes' : 'no'
     const ok = req !== undefined &&
       signer.toLowerCase() === p.from.toLowerCase() &&
-      p.to.toLowerCase() === wallet.address.toLowerCase() &&
+      bound === 'yes' &&
+      p.to.toLowerCase() === billTo.toLowerCase() &&
       Number(p.value) === req.amount &&
       p.slice_id === req.sliceId
     if (ok) {
@@ -145,7 +175,7 @@ function serve (conn) {
       totals.failed++
     }
     const rtt = req ? Date.now() - req.sentAt : -1
-    console.log(`SELLER|proof slice=${p.slice_id} value=${p.value} signer=${signer} ${ok ? 'VERIFIED' : 'REJECTED'} rtt_ms=${rtt}`)
+    console.log(`SELLER|proof slice=${p.slice_id} value=${p.value} signer=${signer} signer_is_buyer_did=${bound} ${ok ? 'VERIFIED' : 'REJECTED'} rtt_ms=${rtt}`)
   }
 
   conn.on('data', (msg) => {
@@ -192,10 +222,16 @@ function serve (conn) {
 
 async function main () {
   const dht = new HyperDHT({ bootstrap })
-  const server = dht.createServer(serve)
+  const server = dht.createServer((conn) => serve(conn, dht))
   await server.listen(keyPair)
-  console.log('SELLER|listening did:mw:' + keyPair.publicKey.toString('hex'))
-  console.log('SELLER|payee', wallet.address)
+  const did = 'did:mw:' + keyPair.publicKey.toString('hex')
+  console.log('SELLER|listening ' + did)
+
+  const record = { v: 1, did, eth: wallet.address, eth_sig: await wallet.signMessage(did) }
+  const seq = Math.floor(Date.now() / 1000) // rises across restarts
+  const put = await dht.mutablePut(keyPair, Buffer.from(JSON.stringify(record)), { seq })
+  console.log(`SELLER|record published seq=${seq} nodes=${put.closestNodes.length} payee=${wallet.address}`)
+  if (wrongPayee) console.log('SELLER|--wrong-payee: billing to', billTo)
 
   setTimeout(async () => {
     console.log(`SELLER|summary verified=${totals.verified} failed=${totals.failed} micro_usdc=${totals.micro}`)

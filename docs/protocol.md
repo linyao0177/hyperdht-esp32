@@ -242,6 +242,19 @@ puncher addr}` to the client.
   when the first UDX packet arrives (raw stream firewall hook) on any socket → `connect(socket, remote udx id,
   port, host)` and start SecretStream as responder.
 
+## Mutable records (index.js mutablePut / mutableGet, lib/persistent.js)
+
+- `target = BLAKE2b-256(publicKey)`. Commands MUTABLE_PUT = 6, MUTABLE_GET = 7. Errors SEQ_REUSED = 16,
+  SEQ_TOO_LOW = 17.
+- Signature: Ed25519 over `NS_MUTABLE_PUT(32) || BLAKE2b-256(c.uint(seq) || c.buffer(value))`.
+- put: MUTABLE_GET query towards target with value `c.uint(0)` to collect tokens, then to every closest
+  reply with a token send MUTABLE_PUT `{token, target, value = fixed32 publicKey, uint seq, buffer value,
+  fixed64 signature}`. The node checks the target and signature; same seq with a different value → SEQ_REUSED,
+  lower seq → SEQ_TOO_LOW; same seq and value is accepted (republish).
+- get: MUTABLE_GET query with value `c.uint(minSeq)`; a node holding a record with seq >= minSeq replies
+  `{uint seq, buffer value, fixed64 signature}`, otherwise no value. The client verifies each value and keeps
+  the highest seq. Nodes cache mutable records for 48 hours.
+
 ## SecretStream in-band handshake (lib/handshake.js)
 
 Used when there is no DHT handshake (e.g. over BLE or TCP).

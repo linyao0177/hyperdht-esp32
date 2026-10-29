@@ -11,6 +11,7 @@
 
 extern const uint8_t HDHT_NS_ANNOUNCE[32];
 extern const uint8_t HDHT_NS_UNANNOUNCE[32];
+extern const uint8_t HDHT_NS_MUTABLE_PUT[32];
 extern const uint8_t HDHT_NS_PEER_HANDSHAKE[32];
 extern const uint8_t HDHT_NS_PEER_HOLEPUNCH[32];
 extern const uint8_t HDHT_SS_NS_INITIATOR[32];

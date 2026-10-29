@@ -126,4 +126,41 @@ hdht_listen (hdht_t *dht, hdht_server_t *server, const uint8_t public_key[32], c
 void
 hdht_server_close (hdht_server_t *server, void (*on_closed)(hdht_server_t *server));
 
+// mutable records (mutable.c)
+//
+// A value of up to HDHT_MUTABLE_MAX_VALUE bytes signed by an Ed25519 key pair
+// and stored on the nodes closest to BLAKE2b(public key), the same records as
+// hyperdht's mutablePut / mutableGet. Nodes keep them for up to 48 hours, so
+// republish periodically; anyone holding a signed record can republish it.
+// A higher seq replaces a lower one; reusing a seq with a different value is
+// rejected. An operation still running when the DHT is destroyed never calls back.
+
+#ifndef HDHT_MUTABLE_MAX_VALUE
+#define HDHT_MUTABLE_MAX_VALUE 1000
+#endif
+
+typedef enum {
+  HDHT_MUTABLE_ENOT_FOUND = -110,
+  HDHT_MUTABLE_ESEQ_REUSED = -111,
+  HDHT_MUTABLE_ESEQ_TOO_LOW = -112,
+  HDHT_MUTABLE_ETOO_BIG = -113,
+} hdht_mutable_error_t;
+
+// status is 0 when at least one node stored the record; stored counts them.
+typedef void (*hdht_mutable_put_cb)(hdht_t *dht, int status, unsigned stored, void *data);
+
+// status is 0 with the highest valid seq found, or HDHT_MUTABLE_ENOT_FOUND.
+// value is valid only during the callback.
+typedef void (*hdht_mutable_get_cb)(hdht_t *dht, int status, uint64_t seq, const uint8_t *value, size_t len, void *data);
+
+int
+hdht_mutable_put (hdht_t *dht, const uint8_t public_key[32], const uint8_t secret_key[64], uint64_t seq, const uint8_t *value, size_t len, hdht_mutable_put_cb cb, void *data);
+
+// Returns only records signed by public_key with seq >= min_seq.
+int
+hdht_mutable_get (hdht_t *dht, const uint8_t public_key[32], uint64_t min_seq, hdht_mutable_get_cb cb, void *data);
+
+bool
+hdht_mutable_verify (const uint8_t public_key[32], uint64_t seq, const uint8_t *value, size_t len, const uint8_t signature[64]);
+
 #endif

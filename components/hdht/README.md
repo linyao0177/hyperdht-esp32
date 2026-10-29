@@ -16,8 +16,9 @@ The same sources build in two ways:
 | SecretStream over any byte stream (`secret_stream.h`): in-band handshake | Done; used for BLE |
 | `hdht_connect`: FIND_PEER, relayed handshake, direct/OPEN, LAN shortcut, holepunch | Done |
 | `hdht_listen`: announce to the 3 closest nodes, relay keepalive pings every 3 s, re-announce every ~5 min, relayed handshakes, holepunch, unannounce on close | Done |
+| Mutable records (`hdht_mutable_put` / `hdht_mutable_get`): signed values up to 1000 bytes stored under a public key | Done; interoperates with hyperdht's `mutablePut` / `mutableGet` |
 | Holepunching | Consistent ↔ consistent NATs, and local consistent ↔ remote random (random-port probing). A **random NAT on the device's side** is not supported, because hyperdht opens up to 256 sockets for that |
-| Not implemented | blind-relay fallback (`relayThrough`), mutable/immutable put/get, LOOKUP, Hyperswarm topics, reusable sockets, IPv6 |
+| Not implemented | blind-relay fallback (`relayThrough`), immutable put/get, LOOKUP, Hyperswarm topics, reusable sockets, IPv6 |
 
 ## API
 
@@ -47,12 +48,18 @@ hdht_stream_end(&stream);                    // graceful close
 hdht_stream_destroy(&stream, 0);             // immediate close
 // on_close(stream, error) always runs last; error < 0 if the connection failed
 
+// mutable records: a signed value stored under a public key
+hdht_mutable_put(&dht, public_key, secret_key, seq, value, len, on_put, user_data);
+hdht_mutable_get(&dht, public_key, min_seq, on_get, user_data);
+// on_put(dht, status, stored_nodes, data); on_get(dht, status, seq, value, len, data)
+
 hdht_server_close(&server, on_closed);
 hdht_destroy(&dht, on_destroyed);
 ```
 
 - **Keys**: Ed25519 key pairs (`hdht_keypair(pk, sk, seed)`). The public key is the device's address. Generate a random seed once and keep it, for example in NVS.
 - **Peers**: `stream->remote_public_key` is authenticated by the Noise handshake. Check it against an allow list if only known peers may connect.
+- **Mutable records**: stored on the ~20 nodes closest to `BLAKE2b(public key)`, which keep them for up to 48 hours, so republish periodically. A higher `seq` replaces a lower one; putting the same `seq` with a different value fails with `HDHT_MUTABLE_ESEQ_REUSED`, and a lower one with `HDHT_MUTABLE_ESEQ_TOO_LOW`. `get` returns only values whose signature matches the key, and the highest `seq` it finds. Anyone holding a signed record can republish it unchanged.
 - **Errors**: connection failures are reported through `on_close` with a `HDHT_CONNECT_E*` or `HDHT_STREAM_E*` code.
 
 ### SecretStream over other transports
@@ -115,6 +122,7 @@ node tools/host/testnet.js --server --firewalled
 Then:
 - `components/hdht/build/test_connect 127.0.0.1:49800 <key>` connects from C to the JS server over the holepunch path.
 - `components/hdht/build/test_server 127.0.0.1:49800` announces a C server; then `node tools/host/connect-board.js 127.0.0.1:49800 5 0x22` connects to it from JS.
+- `components/hdht/build/test_mutable 127.0.0.1:49800 put <hex seed> <seq> <value>` stores a mutable record and `test_mutable 127.0.0.1:49800 get <hex public key>` reads one; either side can be hyperdht's `mutablePut` / `mutableGet`. Both also work with `public`.
 - `components/hdht/build/test_ss 7777 xx` is a SecretStream responder over TCP; `node tools/host/ss-client.js 7777 xx` runs the official module against it.
 
 ## Source map

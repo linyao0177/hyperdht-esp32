@@ -176,7 +176,7 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`examples/minimal`](examples/minimal) | Start here: a device reachable by key, NVS identity, cross-task data |
 | [`examples/hyperdht_demo`](examples/hyperdht_demo) | Test firmware: client rounds, then server; optional BLE |
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
-| [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, nanopayments over HyperDHT |
+| [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, nanopayments over HyperDHT |
 | [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller |
 | [`docs`](docs) | Protocol notes and the feasibility study |
 | [`research/phase0`](research/phase0) | The original feasibility PoC (libsodium and libudx measurements) |
@@ -191,7 +191,7 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 
 - **Random NAT on the device side**: no holepunching. hyperdht handles this case with up to 256 sockets ("birthday" punching), which a C3 cannot afford. A device behind a consistent NAT can still reach peers behind random NATs.
 - **No relay fallback yet** (`blind-relay` / `relayThrough`), so connections that cannot be holepunched fail.
-- **Not implemented**: Hyperswarm topic discovery, mutable/immutable records, LOOKUP, Protomux, IPv6, reusable sockets, unordered UDX messages.
+- **Not implemented**: Hyperswarm topic discovery, immutable records, LOOKUP, Protomux, IPv6, reusable sockets, unordered UDX messages.
 - **The device is never a DHT routing node**: it is always an ephemeral, firewalled node, by design.
 - **ESP32-C3 only** for now. Other ESP32 variants should work but are untested.
 - **Power**: a server keeps WiFi on and pings its relay nodes every 3 s. Battery devices fit the client role, or BLE.

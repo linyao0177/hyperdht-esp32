@@ -1,11 +1,13 @@
-// Connects to a device by its BoAT MER DID and checks the attested reading it
-// returns (examples/boat_mer).
+// Resolves a device's BoAT MER DID record from the HyperDHT, then connects to
+// the device by its DID and checks the attested reading it returns
+// (examples/boat_mer).
 //
 // usage: node mer-dial.js did:mw:<hex> <bootstrap host:port | public> [rounds, default 3]
 
 const crypto = require('crypto')
 const HyperDHT = require('hyperdht')
 const sodium = require('sodium-universal')
+const { verifyMessage } = require('ethers')
 
 const [did, where = 'public', rounds = '3'] = process.argv.slice(2)
 const bootstrap = where === 'public' ? undefined : [where]
@@ -18,7 +20,19 @@ if (!/^did:mw:[0-9a-f]{64}$/.test(did || '')) {
 // the DID is the device's Ed25519 public key, which is its HyperDHT address
 const publicKey = Buffer.from(did.slice(7), 'hex')
 
-function dial (dht) {
+// the DID record: {"v":1,"did","eth","eth_sig"}, signed by the DID key as a
+// mutable record (mutableGet checks that signature)
+async function resolve (dht) {
+  const started = Date.now()
+  const res = await dht.mutableGet(publicKey)
+  if (!res) return { ok: false, error: 'no record' }
+  const r = JSON.parse(res.value.toString())
+  const ethSigner = verifyMessage(r.did, r.eth_sig)
+  const ok = r.did === did && ethSigner.toLowerCase() === r.eth.toLowerCase()
+  return { ok, seq: res.seq, eth: r.eth, lookup_ms: Date.now() - started }
+}
+
+function dial (dht, record) {
   return new Promise((resolve) => {
     const started = Date.now()
     const conn = dht.connect(publicKey)
@@ -39,7 +53,8 @@ function dial (dht) {
         noise_peer_is_did: conn.remotePublicKey.equals(publicKey),
         did_field_matches: r.did === did,
         hash_matches_payload: hash.toString('hex') === r.hash,
-        ed25519_sig_valid: sodium.crypto_sign_verify_detached(sig, hash, publicKey)
+        ed25519_sig_valid: sodium.crypto_sign_verify_detached(sig, hash, publicKey),
+        eth_matches_record: record.ok && r.eth.toLowerCase() === record.eth.toLowerCase()
       }
       const ok = Object.values(checks).every(Boolean)
       resolve({ ok, open_ms: opened, total_ms: Date.now() - started, eth: r.eth, payload: r.payload, sign_ms: r.sign_ms, checks })
@@ -52,8 +67,11 @@ async function main () {
   await dht.fullyBootstrapped()
   let passed = 0
 
+  const record = await resolve(dht)
+  console.log(`DIAL|record ${record.ok ? 'VALID' : 'INVALID'}`, JSON.stringify(record))
+
   for (let i = 1; i <= Number(rounds); i++) {
-    const res = await dial(dht)
+    const res = await dial(dht, record)
     if (res.ok) passed++
     console.log(`DIAL|round ${i} ${res.ok ? 'PASS' : 'FAIL'}`, JSON.stringify(res))
     await new Promise((resolve) => setTimeout(resolve, 2000))
