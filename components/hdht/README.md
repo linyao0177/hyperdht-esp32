@@ -61,6 +61,8 @@ hdht_announce(&dht, topic, public_key, secret_key, on_announced, user_data);
 
 // blind relay: from now on connect and accept through this relay node
 hdht_set_relay(&dht, relay_public_key);
+// or find a public one: on_found(dht, status, relay_public_key, data)
+hdht_relay_find(&dht, NULL, on_found, user_data);
 // on_put(dht, status, stored_nodes, data); on_get(dht, status, seq, value, len, data)
 
 hdht_server_close(&server, on_closed);
@@ -71,6 +73,7 @@ hdht_destroy(&dht, on_destroyed);
 - **Peers**: `stream->remote_public_key` is authenticated by the Noise handshake. Check it against an allow list if only known peers may connect.
 - **Mutable records**: stored on the ~20 nodes closest to `BLAKE2b(public key)`, which keep them for up to 48 hours, so republish periodically. A higher `seq` replaces a lower one; putting the same `seq` with a different value fails with `HDHT_MUTABLE_ESEQ_REUSED`, and a lower one with `HDHT_MUTABLE_ESEQ_TOO_LOW`. `get` returns only values whose signature matches the key, and the highest `seq` it finds. Anyone holding a signed record can republish it unchanged.
 - **Relay**: with `hdht_set_relay`, every connect and every accepted connection pairs at that relay node instead of holepunching. That is the way through a random (symmetric) NAT or a firewall that blocks UDP holepunching. A peer that asks for a relay (`relayThrough`) gets one either way. The relay sees only encrypted packets. A relay node is any hyperdht peer that accepts blind-relay sessions, for example `node tools/host/relay-test.js public relay`. It needs a public address, or one on the device's LAN.
+- **Finding a relay**: public relay nodes ([`tools/host/relay-node.js`](../../tools/host/relay-node.js), [docs/relay-node.md](../../docs/relay-node.md)) announce under `BLAKE2b-256("hdht-relay/1")` (`hdht_relay_topic`). `hdht_relay_find` looks that topic up and probes the nodes in random order, 8 s each, until one opens a blind-relay channel over our main socket. Pass a key as `avoid` to move off a relay that stopped working. `hdht_relay_probe` checks a single node.
 - **Announce**: a device that announces under a topic should also `hdht_listen` on the same key, so peers that find it can connect. Unannounce is best effort, as in hyperdht. On the public DHT it removed 17–19 of 19 copies at once; the rest expire after 20 minutes.
 - **Topic lookup**: returns up to `HDHT_LOOKUP_MAX_PEERS` (16) distinct public keys from the nodes closest to the topic. The replies are not signed, so treat each key as a hint: connecting to it is what authenticates it, and anything the peer claims should be checked, for example against its mutable record.
 - **Errors**: connection failures are reported through `on_close` with a `HDHT_CONNECT_E*` or `HDHT_STREAM_E*` code.
@@ -137,7 +140,7 @@ Then:
 - `components/hdht/build/test_server 127.0.0.1:49800` announces a C server; then `node tools/host/connect-board.js 127.0.0.1:49800 5 0x22` connects to it from JS.
 - `components/hdht/build/test_mutable 127.0.0.1:49800 put <hex seed> <seq> <value>` stores a mutable record and `test_mutable 127.0.0.1:49800 get <hex public key>` reads one; either side can be hyperdht's `mutablePut` / `mutableGet`. Both also work with `public`.
 - `components/hdht/build/test_lookup <host:port | public> <hex topic>` lists the keys announced under a topic, for example by a Hyperswarm server that joined it. With `announce <hex seed>` or `unannounce <hex seed>`, it first announces or unannounces that key.
-- Relay: `node tools/host/relay-test.js 127.0.0.1:49800 relay` starts a blind-relay node and prints its key. Then set `HDHT_RELAY=<key>` for `test_connect` or `test_server` to go through it. `relay-test.js ... server [relay key]` and `client <key> [relay key]` are the JS ends; both print the address their stream runs over, which is the relay's.
+- Relay: `node tools/host/relay-test.js 127.0.0.1:49800 relay` starts a blind-relay node and prints its key. Then set `HDHT_RELAY=<key>` for `test_connect` or `test_server` to go through it. `relay-test.js ... server [relay key]` and `client <key> [relay key]` are the JS ends; both print the address their stream runs over, which is the relay's. With `node tools/host/relay-node.js 127.0.0.1:49800 --force` running, `HDHT_RELAY=find` makes `test_connect` find the relay by topic.
 - `components/hdht/build/test_ss 7777 xx` is a SecretStream responder over TCP; `node tools/host/ss-client.js 7777 xx` runs the official module against it.
 
 ## Source map

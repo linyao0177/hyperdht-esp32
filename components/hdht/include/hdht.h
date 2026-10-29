@@ -227,4 +227,24 @@ hdht_relay_cancel (hdht_relay_t *relay);
 int
 hdht_relay_connect (hdht_relay_t *relay, hdht_stream_t *stream, uint32_t remote_id);
 
+// Checks that a node is a relay we can use: we reach it on our main socket
+// and it opens the blind-relay channel. cb gets 0 or HDHT_CONNECT_ERELAY;
+// the probe's connection then closes by itself. Cancel only before cb.
+int
+hdht_relay_probe (hdht_t *dht, const uint8_t relay_public_key[32], hdht_relay_cb cb, void *data, hdht_relay_t **out);
+
+// Public relay nodes (tools/host/relay-node.js) announce under this topic:
+// BLAKE2b-256("hdht-relay/1").
+void
+hdht_relay_topic (uint8_t out[32]);
+
+typedef void (*hdht_relay_find_cb)(hdht_t *dht, int status, const uint8_t relay_public_key[32], void *data);
+
+// Looks up the relay topic and probes what it finds, in random order, until
+// one works: cb gets 0 and its key, or HDHT_CONNECT_ERELAY with NULL. avoid
+// (or NULL) is skipped, for moving off a relay that stopped working. Pass the
+// key to hdht_set_relay to use it.
+int
+hdht_relay_find (hdht_t *dht, const uint8_t avoid[32], hdht_relay_find_cb cb, void *data);
+
 #endif

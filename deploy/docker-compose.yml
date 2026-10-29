@@ -1,0 +1,31 @@
+# One public relay node and one open anchor node (docs/relay-node.md).
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   docker compose -f deploy/docker-compose.yml logs -f
+#
+# Host networking: the DHT must see the server's own address and UDP ports.
+# Behind Docker's NAT the relay counts as firewalled and does not announce.
+# Linux only.
+
+services:
+  relay:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    image: hdht-nodes
+    command: ["relay-node.js", "public"]
+    network_mode: host
+    volumes: ["relay:/home/node/.hdht-relay"]
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  anchor:
+    image: hdht-nodes
+    depends_on: [relay]
+    command: ["anchor-node.js", "public"]
+    network_mode: host
+    volumes: ["anchor:/home/node/.open-anchor"]
+    # environment: { HTTPS_PROXY: "http://proxy:port" } # if the chain RPC needs one
+    restart: unless-stopped
+    stop_grace_period: 30s # anchors what it accepted before exiting
+
+volumes:
+  relay:
+  anchor:

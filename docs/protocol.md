@@ -291,6 +291,10 @@ puncher addr}` to the client.
   forwards packets.
 - The relay can forward the peer's first packets before its pair answer arrives. The server's raw-stream
   firewall lets packets from the relay socket through without treating them as a direct path.
+- Finding relays (hdht's convention, not hyperdht's): public relay nodes announce under
+  `BLAKE2b-256("hdht-relay/1")` and put `{"v":1,"did","svc":"relay/1","max_sessions"}` as their mutable
+  record. A probe connects, sends only the channel open, and succeeds when the relay's own open (control
+  type 1) arrives over the main socket.
 
 ## SecretStream in-band handshake (lib/handshake.js)
 

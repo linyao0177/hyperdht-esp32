@@ -47,7 +47,7 @@ With the default USB port, the module's logs go to UART0 (GPIO21) so they never 
 
 ## Results (2026-10-29, ESP32-C3 on the public HyperDHT)
 
-`module_test.py` passed all 48 checks on firmware 0.3 (and all 45 on 0.2, and 35–36 on the first version in its last three runs):
+`module_test.py` passed all 54 checks on firmware 0.4 (48 on 0.3, 45 on 0.2, and 35–36 on the first version in its last three runs):
 
 | | Result |
 |---|---|
@@ -61,6 +61,7 @@ With the default USB port, the module's logs go to UART0 (GPIO21) so they never 
 | Allow list | A peer missing from the list got `+DENIED:...,not allowed`. Clearing the list opened it again |
 | Credential | `AT+CRED` refused a credential whose model was changed after signing, and accepted the genuine one. The host published it in its record, and `issuer.js verify` returned VALID |
 | Relay | With `AT+RELAY` set to a blind-relay node on the computer, an outbound link to a Node.js server and an inbound link from a Node.js client both ran through the relay. Both peers saw the relay's address (192.168.31.152:49738), not the module's, and data went both ways |
+| Relay found by topic | `AT+RELAY=AUTO` found a `relay-node.js` on the computer in 8.8 s, and an outbound link ran through it. That relay was then killed without unannouncing, and a second one started. The next connect failed with -107, the module found the second relay on its own, and the connect after that ran through it in 4.3 s |
 | Announce | `AT+ANNOUNCE` was stored on 20 nodes in 4–7 s, and a Node.js lookup found the module on 19 nodes. `AT+ANNOUNCE=` then unannounced it from all of them |
 | Errors | Unknown command, bad DID, bad hex, a send on a closed link, and a 2408-character line (`ERROR:line too long`) were all reported, and the module kept working |
 | WiFi | `AT+WIFI` to a missing network gave `+NET:DISCONNECTED` at once. `AT+WIFI=` reconnected to the default network in 2 s, and the DHT worked again right away |
@@ -80,5 +81,5 @@ The test runs found three problems, all fixed above:
 - **A real host MCU on UART1.** UART1 builds, but the test ran over USB Serial/JTAG. The two ports share all code above the read and write calls.
 - **`AT+WIFI` to a working network other than the default**, which would need its password in the test.
 - **Anchoring and payments.** [`examples/boat_mer`](../boat_mer) does them in firmware; they are not commands yet.
-- **A real random NAT.** The relay was tested with the module and its peers on the same LAN as the relay node, with the relay forced by `AT+RELAY`. A 4G router with a symmetric NAT has not been tried.
+- **A real random NAT.** The relay was tested with the module and its peers on the same LAN as the relay node, with the relay given by `AT+RELAY` or found by `AT+RELAY=AUTO` (`relay-node.js --force`). A 4G router with a symmetric NAT has not been tried.
 - **A host-side C driver.** `module_host.py` shows the parsing a host needs.

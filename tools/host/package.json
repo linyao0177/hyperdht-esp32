@@ -1,13 +1,14 @@
 {
   "name": "hyperdht-esp32-tools",
   "private": true,
-  "description": "Node.js peers for testing hyperdht-esp32: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer, module test peers, credential issuer",
+  "description": "Node.js peers for testing hyperdht-esp32: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer, module test peers, credential issuer, public relay node",
   "scripts": {
     "start": "node echo-server.js"
   },
   "dependencies": {
     "@abandonware/noble": "1.9.2-26",
     "@tlay/hashanchor-client": "github:TLAY-IO/hashanchor#v1.0.1",
+    "blind-relay": "1.6.1",
     "corestore": "7.16.1",
     "ethers": "6.17.0",
     "https-proxy-agent": "7.0.6",

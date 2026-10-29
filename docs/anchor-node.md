@@ -17,13 +17,11 @@ This is a public testnet. Payments are verified but not yet settled, so running 
 
 The contract has no owner, no operator role and no upgrade path. The first anchor of a root is kept, with the wallet that anchored it and the block time.
 
-The explorer does not show the source yet: its verification API was rate-limiting requests when the contract was deployed (2026-10-29). Anyone can submit it. This compiles exactly what `anchor-deploy.js` deployed: solc 0.8.28, optimizer off.
+The explorer shows the verified source (solc 0.8.28, optimizer off), so anyone can check the contract against [`OpenAnchor.sol`](../tools/host/contracts/OpenAnchor.sol). It was verified on 2026-10-29 with:
 
 ```bash
-forge verify-contract --chain-id 5042002 --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/ 0xd7d651a6fecE5C9ed96796678ED995Fb12dAbeCA src/OpenAnchor.sol:OpenAnchor
+forge verify-contract --chain-id 5042002 --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/ --compiler-version 0.8.28 0xd7d651a6fecE5C9ed96796678ED995Fb12dAbeCA src/OpenAnchor.sol:OpenAnchor
 ```
-
-Run it from a Foundry project with `contracts/OpenAnchor.sol` copied to `src/`.
 
 ## What a node does
 
@@ -69,6 +67,12 @@ Options:
 | `--contract <addr>`, `--rpc <url>` | from the network | another deployment or RPC |
 
 Behind an HTTP proxy, set `HTTPS_PROXY`; the chain RPC goes through it. The DHT is UDP and does not.
+
+To keep it running on a server, use [`deploy/`](../deploy):
+- `docker compose -f deploy/docker-compose.yml up -d --build` runs it next to a public relay node ([relay-node.md](relay-node.md)), with its keys and log in a volume;
+- `deploy/systemd/open-anchor-node.service` runs it as a systemd service.
+
+The first start prints the wallet to fund. Back up the volume or `~/.open-anchor`.
 
 ## Check that devices can find you
 

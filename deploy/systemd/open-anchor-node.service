@@ -1,0 +1,27 @@
+# Open anchor node on the Arc testnet (docs/anchor-node.md). Assumes the
+# repository in /opt/hyperdht-esp32 with `npm ci` run in tools/host, and a
+# user "hdht". Fund the wallet it prints on first start.
+#   sudo cp deploy/systemd/open-anchor-node.service /etc/systemd/system/
+#   sudo systemctl enable --now open-anchor-node
+#   journalctl -u open-anchor-node -f
+
+[Unit]
+Description=Open anchor node (Arc testnet)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=hdht
+WorkingDirectory=/opt/hyperdht-esp32/tools/host
+ExecStart=/usr/bin/node anchor-node.js public
+# Environment=HTTPS_PROXY=http://proxy:port
+Restart=always
+RestartSec=10
+# it anchors what it accepted before exiting
+TimeoutStopSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

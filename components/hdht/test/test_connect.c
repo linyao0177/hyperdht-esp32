@@ -2,7 +2,8 @@
 //
 //   test_connect <bootstrap host:port> <hex server public key> [message]
 //
-// HDHT_RELAY=<hex key> connects (or accepts) through that blind relay only.
+// HDHT_RELAY=<hex key> connects (or accepts) through that blind relay only;
+// HDHT_RELAY=find uses the first relay hdht_relay_find finds.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,11 +45,34 @@ on_close (hdht_stream_t *s, int error) {
   hdht_destroy(&dht, on_destroyed);
 }
 
+static bool find_relay;
+
+static void
+connect_now (hdht_t *d) {
+  started = uv_now(d->loop);
+  hdht_connect(d, &stream, server_key, on_open, on_data, on_close, NULL);
+}
+
+static void
+on_relay_found (hdht_t *d, int status, const uint8_t key[32], void *data) {
+  (void) data;
+  char hex[65];
+  if (status != 0) {
+    printf("relay find: none usable (%d)\n", status);
+    hdht_destroy(d, on_destroyed);
+    return;
+  }
+  printf("relay find: %s after %llu ms\n", sodium_bin2hex(hex, sizeof(hex), key, 32), (unsigned long long) (uv_now(d->loop) - started));
+  hdht_set_relay(d, key);
+  connect_now(d);
+}
+
 static void
 on_ready (hdht_t *d, int status) {
   printf("bootstrapped: status=%d table=%u\n", status, d->table_len);
   started = uv_now(d->loop);
-  hdht_connect(d, &stream, server_key, on_open, on_data, on_close, NULL);
+  if (find_relay) hdht_relay_find(d, NULL, on_relay_found, NULL);
+  else connect_now(d);
 }
 
 static void
@@ -77,7 +101,8 @@ main (int argc, char **argv) {
   if (hdht_init(&dht, uv_default_loop(), &opts) != 0) return 1;
   const char *relay = getenv("HDHT_RELAY");
   uint8_t relay_key[32];
-  if (relay && sodium_hex2bin(relay_key, 32, relay, strlen(relay), NULL, NULL, NULL) == 0) hdht_set_relay(&dht, relay_key);
+  find_relay = relay && strcmp(relay, "find") == 0;
+  if (relay && !find_relay && sodium_hex2bin(relay_key, 32, relay, strlen(relay), NULL, NULL, NULL) == 0) hdht_set_relay(&dht, relay_key);
   add_local_addresses();
 
   hdht_bootstrap(&dht, on_ready);

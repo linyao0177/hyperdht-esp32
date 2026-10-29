@@ -24,6 +24,8 @@
 #define CLOSE_MS     5000 // AT+CLOSE: then closed outright if the peer has not ended
 #define MAX_TOPICS   4
 #define ANNOUNCE_MS  (10 * 60 * 1000) // announcements live 20 min on the DHT
+#define RELAY_RETRY_MS (60 * 1000)      // AT+RELAY=AUTO found none: look again
+#define RELAY_CHECK_MS (10 * 60 * 1000) // AT+RELAY=AUTO: is the relay still there
 
 typedef struct {
   bool used;
@@ -47,10 +49,12 @@ static size_t record_len;
 static uint64_t record_seq;
 static bool putting, put_again; // put_again: the record changed during a put
 static uint64_t putting_seq;
-static uv_timer_t republish_timer, restart_timer, announce_timer;
+static uv_timer_t republish_timer, restart_timer, announce_timer, relay_timer;
 
 static bool has_relay;
 static uint8_t relay[32];
+static bool relay_auto;   // AT+RELAY=AUTO: a public relay found by topic
+static bool relay_finding;
 
 static uint8_t topics[MAX_TOPICS][32];
 static size_t topics_len;
@@ -144,8 +148,9 @@ static void
 save_relay (void) {
   nvs_handle_t nvs;
   if (nvs_open("module", NVS_READWRITE, &nvs) != ESP_OK) return;
-  if (has_relay) nvs_set_blob(nvs, "relay", relay, 32);
+  if (has_relay && !relay_auto) nvs_set_blob(nvs, "relay", relay, 32);
   else nvs_erase_key(nvs, "relay");
+  nvs_set_u8(nvs, "relay_auto", relay_auto);
   nvs_commit(nvs);
   nvs_close(nvs);
 }
@@ -182,10 +187,15 @@ on_link_data (hdht_stream_t *stream, const uint8_t *data, size_t len) {
   }
 }
 
+static void find_relay (const uint8_t *avoid);
+static void on_relay_timer (uv_timer_t *t);
+
 static void
 on_link_close (hdht_stream_t *stream, int err) {
   link_t *l = stream->data;
   port_printf("+CLOSED:%d,%d", link_index(l), err);
+  // the relay we found stopped working: find another
+  if (err == HDHT_CONNECT_ERELAY && relay_auto && has_relay) find_relay(relay);
   uv_timer_stop(&l->close_timer);
   l->used = false;
   l->open = false;
@@ -344,6 +354,57 @@ static void
 on_announce_timer (uv_timer_t *t) {
   (void) t;
   for (size_t i = 0; i < topics_len && dht_ready; i++) announce_topic(topics[i], false);
+}
+
+static void
+on_relay_found (hdht_t *d, int status, const uint8_t key[32], void *data) {
+  (void) d;
+  (void) data;
+  relay_finding = false;
+  if (!relay_auto) return; // switched off meanwhile
+  if (status == 0) {
+    char did[72];
+    did_of(key, did);
+    memcpy(relay, key, 32);
+    has_relay = true;
+    hdht_set_relay(&dht, relay);
+    port_printf("+RELAYFOUND:%s", did);
+    uv_timer_start(&relay_timer, on_relay_timer, RELAY_CHECK_MS, 0);
+    return;
+  }
+  // none usable: connect directly until one turns up
+  has_relay = false;
+  hdht_set_relay(&dht, NULL);
+  port_line("+RELAYFOUND:");
+  uv_timer_start(&relay_timer, on_relay_timer, RELAY_RETRY_MS, 0);
+}
+
+static void
+find_relay (const uint8_t *avoid) {
+  if (relay_finding || !dht_ready) return;
+  relay_finding = true;
+  uv_timer_stop(&relay_timer);
+  if (hdht_relay_find(&dht, avoid, on_relay_found, NULL) != 0) on_relay_found(&dht, HDHT_ENOMEM, NULL, NULL);
+}
+
+static void
+on_relay_checked (hdht_relay_t *r, int status, uint32_t remote_id, void *data) {
+  (void) r;
+  (void) remote_id;
+  (void) data;
+  if (!relay_auto || !has_relay) return;
+  if (status == 0) uv_timer_start(&relay_timer, on_relay_timer, RELAY_CHECK_MS, 0);
+  else find_relay(relay);
+}
+
+// no relay yet: look again; a relay in use: check it still answers, so
+// inbound connections, which cannot report a failed pairing, keep working
+static void
+on_relay_timer (uv_timer_t *t) {
+  (void) t;
+  if (!relay_auto) return;
+  if (!has_relay) find_relay(NULL);
+  else if (hdht_relay_probe(&dht, relay, on_relay_checked, NULL, NULL) != 0) uv_timer_start(&relay_timer, on_relay_timer, RELAY_RETRY_MS, 0);
 }
 
 static void
@@ -767,23 +828,27 @@ at_line (char *line) {
     return;
   }
   if (strcmp(name, "AT+RELAY") == 0 && (set || query)) {
+    char d[72];
     if (query) {
-      if (has_relay) {
-        char d[72];
-        did_of(relay, d);
-        port_printf("+RELAY:%s", d);
-      }
+      if (has_relay) did_of(relay, d);
+      if (relay_auto) port_printf("+RELAY:AUTO,%s", has_relay ? d : "");
+      else if (has_relay) port_printf("+RELAY:%s", d);
       ok();
       return;
     }
-    if (args[0] == '\0') has_relay = false;
-    else if (parse_key(args, relay)) has_relay = true;
-    else {
+    bool to_auto = strcmp(args, "AUTO") == 0;
+    uint8_t key[32];
+    if (!to_auto && args[0] != '\0' && !parse_key(args, key)) {
       error("bad did");
       return;
     }
+    relay_auto = to_auto;
+    has_relay = !to_auto && args[0] != '\0';
+    if (has_relay) memcpy(relay, key, 32);
+    uv_timer_stop(&relay_timer);
     save_relay();
     hdht_set_relay(&dht, has_relay ? relay : NULL);
+    if (to_auto) find_relay(NULL); // then +RELAYFOUND
     ok();
     return;
   }
@@ -846,6 +911,7 @@ at_init (void) {
   uv_timer_init(&loop, &republish_timer);
   uv_timer_init(&loop, &restart_timer);
   uv_timer_init(&loop, &announce_timer);
+  uv_timer_init(&loop, &relay_timer);
   for (int i = 0; i < MAX_LINKS; i++) {
     uv_timer_init(&loop, &links[i].close_timer);
     links[i].close_timer.data = &links[i];
@@ -860,6 +926,9 @@ at_init (void) {
   nvs_get_u64(nvs, "rec_seq", &record_seq);
   len = 32;
   has_relay = nvs_get_blob(nvs, "relay", relay, &len) == ESP_OK;
+  uint8_t a = 0;
+  nvs_get_u8(nvs, "relay_auto", &a);
+  relay_auto = a;
   len = sizeof(topics);
   if (nvs_get_blob(nvs, "topics", topics, &len) == ESP_OK) topics_len = len / 32;
   len = sizeof(cred);
@@ -871,7 +940,8 @@ at_init (void) {
 // listen if asked to
 void
 at_dht_ready (void) {
-  if (has_relay) hdht_set_relay(&dht, relay);
+  if (relay_auto) find_relay(NULL);
+  else if (has_relay) hdht_set_relay(&dht, relay);
   if (topics_len) {
     on_announce_timer(NULL);
     uv_timer_start(&announce_timer, on_announce_timer, ANNOUNCE_MS, ANNOUNCE_MS);

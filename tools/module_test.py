@@ -11,8 +11,10 @@ Run with the ESP-IDF python env (pyserial, cryptography) and after
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -22,6 +24,7 @@ from module_host import Module, ModuleError  # noqa: E402
 
 HOST = os.path.join(os.path.dirname(__file__), 'host')
 results = []
+peers = []  # killed on exit, also when a check raises
 
 
 def check(name, ok, detail=''):
@@ -31,7 +34,9 @@ def check(name, ok, detail=''):
 
 def peer(*args, script='module-peer.js'):
     """Starts a Node.js test peer; returns the process."""
-    return subprocess.Popen(['node', script, *args], cwd=HOST, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    p = subprocess.Popen(['node', script, *args], cwd=HOST, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    peers.append(p)
+    return p
 
 
 def peer_line(p, prefix, timeout=60, tag='PEER|'):
@@ -76,6 +81,7 @@ def main(port):
     did = boot.split(',')[1]
     check('boot, WiFi and DHT', ready.split(',')[1] == '0', f'ready in {time.time() - t0:.1f} s, {net.split(",")[0]}')
     key = bytes.fromhex(did[7:])
+    m.command('AT+RELAY=')  # a run that died midway may have left one set
 
     # basics
     check('AT', m.command('AT') == [])
@@ -228,6 +234,50 @@ def main(port):
     check('AT+RELAY= clears', m.command('AT+RELAY?') == [])
     relay.kill()
 
+    # public relays found by topic (tools/host/relay-node.js); --force because
+    # this computer is behind NAT and reachable only from the module's LAN
+    stores = tempfile.mkdtemp(prefix='relay-nodes-')
+    def relay_node(name):
+        p = peer('public', '--store', os.path.join(stores, name), '--force', script='relay-node.js')
+        line = peer_line(p, 'listening', tag=f'RELAY[{name}]|')
+        peer_line(p, 'record published', tag=f'RELAY[{name}]|')
+        return p, line.split()[1]
+    relay_a, a_did = relay_node('relay-a')
+    t = time.time()
+    m.command('AT+RELAY=AUTO')
+    found = m.wait_event('+RELAYFOUND', timeout=90)
+    check('AT+RELAY=AUTO finds the relay node', found == '+RELAYFOUND:' + a_did, f'{found[:30]}... in {time.time() - t:.1f} s')
+    check('AT+RELAY? in auto mode', m.command('AT+RELAY?') == ['+RELAY:AUTO,' + a_did])
+    js = peer('public', 'server', script='relay-test.js')
+    js_did = 'did:mw:' + peer_line(js, '', tag='SERVER|')
+    link, conn, took, retries = connect(m, js_did)
+    over = peer_line(js, 'connection', tag='SERVER|')
+    check('outbound through the found relay', over is not None and ip not in over, f'{took:.1f} s, {retries} retries')
+    m.command(f'AT+CLOSE={link}')
+    m.wait_event(f'+CLOSED:{link}', timeout=15)
+
+    # relay A dies without unannouncing; B is up: the next relayed connect
+    # fails with -107 and the module moves to B
+    relay_a.kill()
+    relay_b, b_did = relay_node('relay-b')
+    link = m.command('AT+CONNECT=' + js_did)[0].split(':')[1]
+    ev = m.wait_event('+C', timeout=90, match=lambda x: x.startswith(f'+CONN:{link},') or x.startswith(f'+CLOSED:{link},'))
+    found = m.wait_event('+RELAYFOUND', timeout=90)
+    check('a dead relay is replaced', ev == f'+CLOSED:{link},-107' and found == '+RELAYFOUND:' + b_did, f'{ev}, then {found[:30]}...')
+    link, conn, took, retries = connect(m, js_did)
+    over = peer_line(js, 'connection', tag='SERVER|')
+    check('outbound through the new relay', over is not None and ip not in over, f'{took:.1f} s, {retries} retries')
+    m.command(f'AT+CLOSE={link}')
+    m.wait_event(f'+CLOSED:{link}', timeout=15)
+    m.command('AT+RELAY=')
+    check('AT+RELAY= leaves auto mode', m.command('AT+RELAY?') == [])
+    js.kill()
+    # stop both cleanly so neither stays announced on the public DHT
+    relay_a, _ = relay_node('relay-a')
+    for p in (relay_a, relay_b):
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=10)
+
     # announce under a topic: Node.js finds the module by topic, then by key
     topic = m.command('AT+HASH=uart-module-announce')[0][6:]
     t = time.time()
@@ -274,4 +324,10 @@ if __name__ == '__main__':
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
-    sys.exit(0 if main(sys.argv[1]) else 1)
+    try:
+        ok = main(sys.argv[1])
+    finally:
+        for p in peers:
+            if p.poll() is None:
+                p.kill()
+    sys.exit(0 if ok else 1)

@@ -2,7 +2,7 @@
 
 [`examples/uart_module`](../examples/uart_module) turns the ESP32-C3 into a network module. A host MCU uses it the way it would use an AT-command WiFi module: one text command per line over a serial port. The module handles WiFi, its identity, peer-to-peer connections by DID, signed records and topic lookup. The host needs no network stack and no cryptography of its own.
 
-Version: `hdht-module/0.3`.
+Version: `hdht-module/0.4`.
 
 ## Wiring
 
@@ -90,8 +90,9 @@ Up to 4 links at a time, numbered 0–3.
 | Command | Result | |
 |---|---|---|
 | `AT+RELAY=<did>` | — | **DHT**. From now on every connection, outbound and inbound, goes through this blind-relay node instead of holepunching. Kept in NVS. This is for modules behind a random (symmetric) NAT, such as many 4G routers, which cannot be holepunched. The relay forwards encrypted packets and cannot read them |
+| `AT+RELAY=AUTO` | — | **DHT**. The same, through a public relay node the module finds by topic ([relay-node.md](relay-node.md)). Then `+RELAYFOUND`. The module looks again when a relayed connect fails with -107, and checks its relay every 10 minutes. Kept in NVS: after a restart it finds a relay again |
 | `AT+RELAY=` | — | **DHT**. Back to direct connections. A peer that asks for a relay still gets one |
-| `AT+RELAY?` | `+RELAY:<did>`, or nothing | **DHT** |
+| `AT+RELAY?` | `+RELAY:<did>`, `+RELAY:AUTO,<did or empty>`, or nothing | **DHT** |
 
 ## Events
 
@@ -105,6 +106,7 @@ Up to 4 links at a time, numbered 0–3.
 | `+DENIED:<did>,<reason>` | an inbound peer was refused: `not allowed` or `no free link` |
 | `+DATA:<link>,<length>,<hex>` | a message from the peer. A message over 1024 bytes arrives as several events, in order |
 | `+CLOSED:<link>,<error>` | the link is gone. 0 is a clean end, -12 means closed by `AT+CLOSE` after the timeout, -100…-106 mean a connect failed, and -107 means the relay could not pair the two sides |
+| `+RELAYFOUND:<did>` or `+RELAYFOUND:` | in `AT+RELAY=AUTO`: the relay now in use, or none found (direct connections until one is; the module looks again every minute) |
 | `+PUT:<status>,<nodes stored>,<seq>` | a record put finished. Status 0 means at least one node stored it |
 | `+GET:<did>,<status>,<seq>,<hex>` | status 0 with the value, or -110 if not found |
 | `+LOOKUP:<topic>,<status>,<count>[,<did>...]` | up to 16 DIDs. They are hints, not proof: connect to authenticate, and check the peer's record |
