@@ -189,6 +189,8 @@ DHT 不负责准入。任何密钥都能加入网络、宣告自己、发布记�
 
 ## 基于它构建产品
 
+如果产品自己的主控 MCU 跑应用，可以保持原有固件不变，通过串口把 C3 当作模组来驱动：见 [`examples/uart_module`](../examples/uart_module)，命令说明在 [`module-uart.md`](module-uart.md)。
+
 [`examples/app_template`](../examples/app_template) 把下面这些步骤合在了一起：身份、记录、认领、授权、撤销，以及任何对端都能保存的签名读数。复制它，再替换 `app.c` 即可。
 
 **1. 硬件预算。** ESP32-C3，4 MB flash。WiFi 加 hdht 的固件约 1.06 MB，带 BLE 再加 0.22 MB。规划一个 20 KB 栈的任务，每条活跃连接约 25 KB 堆。

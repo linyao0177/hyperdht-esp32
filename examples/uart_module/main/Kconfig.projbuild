@@ -1,0 +1,38 @@
+menu "hyperdht module"
+
+choice MODULE_PORT
+    prompt "Command port"
+    default MODULE_PORT_USB
+    help
+        Where the host sends AT commands. USB Serial/JTAG is the dev board's
+        USB port (move the console off it, see sdkconfig.defaults). UART1 is
+        two pins wired to the host MCU.
+
+config MODULE_PORT_USB
+    bool "USB Serial/JTAG"
+
+config MODULE_PORT_UART
+    bool "UART1"
+
+endchoice
+
+config MODULE_UART_TX_PIN
+    int "UART1 TX pin (to the host's RX)"
+    depends on MODULE_PORT_UART
+    default 4
+
+config MODULE_UART_RX_PIN
+    int "UART1 RX pin (from the host's TX)"
+    depends on MODULE_PORT_UART
+    default 5
+
+config MODULE_UART_BAUD
+    int "UART1 baud rate"
+    depends on MODULE_PORT_UART
+    default 115200
+
+config MODULE_BOOTSTRAP
+    string "Bootstrap node (ip:port), empty for the public HyperDHT"
+    default ""
+
+endmenu

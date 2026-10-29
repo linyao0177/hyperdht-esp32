@@ -174,11 +174,12 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`components/uv_esp`](components/uv_esp) | The libuv subset libudx and hdht need, on lwIP |
 | [`components/hdht_ble`](components/hdht_ble) | SecretStream over BLE GATT (NimBLE) |
 | [`examples/minimal`](examples/minimal) | Start here: a device reachable by key, NVS identity, cross-task data |
+| [`examples/uart_module`](examples/uart_module) | The C3 as a network module: a host MCU drives it with AT-style commands over a serial line ([command reference](docs/module-uart.md)) |
 | [`examples/app_template`](examples/app_template) | Template for a product with no server: signed record, claim with a setup code, owner-signed grants, revocation, signed readings kept by any peer |
 | [`examples/hyperdht_demo`](examples/hyperdht_demo) | Test firmware: client rounds, then server; optional BLE |
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
 | [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, open anchor nodes found by topic lookup (public testnet), nanopayments over HyperDHT |
-| [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer |
+| [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer, module test peers |
 | [`docs`](docs) | Architecture, protocol notes and the feasibility study |
 | [`research/phase0`](research/phase0) | The original feasibility PoC (libsodium and libudx measurements) |
 | [`patches/libudx`](patches/libudx) | The libudx fixes, prepared for upstream |

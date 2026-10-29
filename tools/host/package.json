@@ -1,7 +1,7 @@
 {
   "name": "hyperdht-esp32-tools",
   "private": true,
-  "description": "Node.js peers for testing hyperdht-esp32: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer",
+  "description": "Node.js peers for testing hyperdht-esp32: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer, module test peers",
   "scripts": {
     "start": "node echo-server.js"
   },
