@@ -189,6 +189,8 @@ There is no central server on the data path. Optional services sit beside it and
 
 ## Building a product on it
 
+[`examples/app_template`](../examples/app_template) puts the steps below together: identity, record, claim, grants, revocation and signed readings that any peer can keep. Copy it and replace `app.c`.
+
 **1. Hardware budget.** An ESP32-C3 with 4 MB flash. WiFi plus hdht is ~1.06 MB of firmware, +0.22 MB with BLE. Plan for one 20 KB task and ~25 KB of heap per active connection.
 
 **2. Identity at first boot.** Generate a seed, store it in encrypted NVS, derive the key pair. Print or label the public key (or DID) at manufacturing if users need to pair with it. Publish a record describing the device.

@@ -1,0 +1,11 @@
+menu "Distributed app template"
+
+config APP_NAME
+    string "Device name, published in its record (no quotes)"
+    default "app-template"
+
+config APP_BOOTSTRAP
+    string "Bootstrap node (ip:port), empty for the public HyperDHT"
+    default ""
+
+endmenu
