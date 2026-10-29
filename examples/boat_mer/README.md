@@ -2,12 +2,13 @@
 
 A proof of concept that combines [BoAT MER](https://github.com/TLAY-IO/boat-mer) with hyperdht-esp32 on one ESP32-C3. BoAT MER (Machine Economy Runtime) is an Apache-2.0 C runtime that handles device identity, signed machine data and EIP-3009 nanopayments. hyperdht-esp32 makes the device reachable by public key from anywhere.
 
-The firmware does four things:
+The firmware does five things:
 
 1. **One identity.** MER generates and keeps the device keys. Its Ed25519 key pair is used unchanged as the HyperDHT key pair, for listening and for outgoing connections. So the device's DID, `did:mw:<ed25519 public key>`, is also its HyperDHT address.
 2. **Reachable by DID.** Anyone who knows the DID can connect to the device, through NATs and end to end encrypted. The Noise handshake proves the device holds the DID's key. The device answers with a reading attested by MER (SHA-256 + Ed25519) and ends the stream.
 3. **A DID record without a registry.** The device publishes a small record that binds its DID to its wallet as a HyperDHT mutable record, stored under its own key. Anyone can look it up by DID and check it without trusting the nodes that store it.
-4. **Nanopayments across the internet.** MER's buyer engine is written against a small transport vtable, and normally runs over BLE GATT to a seller a few metres away. Here it runs over a HyperDHT stream. The board reads the remote seller's power, opens a paying stream, validates every slice and signs an EIP-3009 authorization for each one on the device. It pays only the wallet named in the seller's DID record.
+4. **Anchoring without a central server.** Signed readings go to several open anchor nodes that anyone can run, instead of one HashAnchor server. See [Distributed anchoring](#distributed-anchoring).
+5. **Nanopayments across the internet.** MER's buyer engine is written against a small transport vtable, and normally runs over BLE GATT to a seller a few metres away. Here it runs over a HyperDHT stream. The board reads the remote seller's power, opens a paying stream, validates every slice and signs an EIP-3009 authorization for each one on the device. It pays only the wallet named in the seller's DID record.
 
 Nothing is settled on-chain. The seller (`tools/host/mer-seller.js`) verifies each authorization the way a settlement service would, and the amounts are synthetic.
 
@@ -114,6 +115,79 @@ Three runs: a normal one, a dial from the Mac, and one against a seller billing 
 | Free heap | ~147 KB steady; lowest 104 KB |
 | Loop task stack | 14.4 KB of 20 KB at peak, unchanged |
 | Image | 1.09 MB, 7.6 KB more than without DID records |
+
+## Distributed anchoring
+
+[HashAnchor](https://github.com/TLAY-IO/hashanchor) batches data hashes into Merkle trees, anchors each root on a chain and hands out receipts that anyone can verify offline. A receipt's validity does not depend on who built the tree or who anchored the root, so that role does not have to be one company's server. This proof of concept splits it into open nodes:
+
+| Piece | What it does |
+|---|---|
+| [`tools/host/contracts/OpenAnchor.sol`](../../tools/host/contracts/OpenAnchor.sol) | Anyone can anchor a root; the first anchor is kept with who did it and when. No operator role and no upgrade path |
+| [`tools/host/anchor-node.js`](../../tools/host/anchor-node.js) | An anchor node. Devices reach it over HyperDHT by its key. It checks each submission, batches every 20 s into a tree that HashAnchor's public verifier accepts (keccak256, sorted pairs), anchors from its own wallet, appends the batch to a Hypercore anyone can replicate, and sends receipts back. It publishes a DID record with its wallet, fee, contract and log key |
+| [`main/anchor.c`](main/anchor.c) | The device side: reads each node's DID record, attests a reading every 30 s (MER: SHA-256 + Ed25519), sends it to every node with an EIP-3009 payment of the node's fee, checks each receipt's Merkle proof, and flags receipts that do not arrive |
+| [`tools/host/anchor-verify.js`](../../tools/host/anchor-verify.js) | An independent verifier. From two DIDs only, it replicates the node's batch log, rebuilds every receipt for the device, checks it with HashAnchor's own `verifyReceiptProof`, and reads the contract |
+
+What changes compared with the hosted service:
+
+- **No API key.** The HyperDHT stream authenticates the device's DID, and a payment signed by the wallet in the device's DID record pays for each submission.
+- **The leaf binds the device.** A leaf is `keccak256(data hash || device public key || Ed25519 signature)`, not the bare hash, so a receipt proves which device signed the data. The verifier recomputes the leaf from its parts.
+- **Several nodes per reading.** The device sends each reading to every node, so one node that drops it cannot censor it. Identical single-leaf batches on two nodes give the same root, which the second node reuses instead of anchoring again.
+- **Receipts can be rebuilt without the node.** Every batch, with all its leaves, is in the node's Hypercore. Anyone who replicates it can serve or rebuild receipts after the node is gone.
+- **The device checks what it can.** It recomputes the leaf and walks the proof to the root, but it has no chain access, so it cannot see the anchor itself. The verifier, or any phone or server, does that.
+
+### Running it
+
+1. Start a local chain and deploy the contract (needs [Foundry](https://getfoundry.sh)):
+
+   ```bash
+   anvil
+   ```
+
+   ```bash
+   cd tools/host && node anchor-deploy.js
+   ```
+
+2. Start nodes, each in its own terminal, with the printed contract address. Index 1–3 selects the node's key and an anvil dev wallet. `--drop` makes a node that accepts and never anchors:
+
+   ```bash
+   node anchor-node.js public 1 <contract>
+   ```
+
+3. Set `CONFIG_MER_ANCHOR_NODES` to the nodes' keys (the hex after `did:mw:` in each node's first line), comma-separated, then build and flash. `CONFIG_MER_SELLER_KEY` can stay empty.
+
+4. Verify a node's work for the board:
+
+   ```bash
+   node anchor-verify.js public did:mw:<node> did:mw:<board>
+   ```
+
+### Results (2026-10-29, same board, public HyperDHT, local anvil chain)
+
+Three nodes: two honest, one started with `--drop`. The board ran for 4 minutes.
+
+| | Result |
+|---|---|
+| Node discovery | All 3 node records found and valid; each node's quote named the wallet in its record |
+| Submissions | 8 readings, each to all 3 nodes: 24 submissions, 24 payments signed on the device (394–659 ms each), 0 rejected |
+| Honest nodes | 8 of 8 receipts from each, every Merkle proof valid on the device. Node 2's 8 batches had the same roots as node 1's and reused node 1's transactions, so node 2 paid no gas |
+| Censoring node | Accepted all 8 and anchored none. The board flagged each receipt overdue after 120 s (4 within the run); the same readings were anchored through the other two nodes |
+| Submit to receipt | 2.7–20.8 s, median 9.3 s, with a 20 s batch interval |
+| Independent verification | Node 1: 9 of 9 leaves pass, node 2: 10 of 10 (the board kept submitting after the capture). Each: device signature, leaf, tree root, HashAnchor `verifyReceiptProof`, root on chain, anchorer as logged. Replicating each log took ~10 s |
+| Restart | Nodes restarted on their stored logs kept the same log key, and the logs replicated from them afterwards |
+| Wrong payer (JS test device) | A payment signed by a wallet other than the one in the device's DID record was rejected |
+| Free heap | ~141 KB steady; lowest 59 KB, with three node connections open |
+| Loop task stack | 12.5 KB of 20 KB at peak |
+| Image | 4 KB more than without anchoring |
+
+A first run found two node bugs, both fixed before these results: the second node to build an identical root failed with "already anchored" and lost the batch, and a failed transaction left the node's nonce manager stuck so it never anchored again.
+
+What this does not cover yet:
+
+- **Settlement.** Payments are verified, not settled.
+- **A real chain and real gas economics.** With many nodes, batches get smaller and gas per hash rises. A shared root of roots, or a cheap chain, would offset that.
+- **Discovery.** Nodes are configured by key. Open discovery needs Hyperswarm topics on the device, which hdht does not have yet.
+- **Mirrors.** Only the node itself serves its log. Independent mirrors that keep replicating are needed so receipts outlive nodes.
+- **Node-signed receipts.** HashAnchor receipts have an optional `signature` field; here the authenticated stream stands in for it, which helps only the device.
 
 ## Integration notes
 

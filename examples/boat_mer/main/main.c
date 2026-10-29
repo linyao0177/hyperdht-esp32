@@ -9,6 +9,8 @@
 //   HyperDHT stream instead of BLE GATT. It reads the seller's power, opens a
 //   paying stream, validates every slice and signs an EIP-3009 authorization
 //   for it on the device. Nothing is settled here; the seller only verifies.
+// - Anchoring (CONFIG_MER_ANCHOR_NODES): signed readings go to several open
+//   anchor nodes instead of one HashAnchor server; see anchor.c.
 // - DID record: the device publishes {"v":1,"did","eth","eth_sig"} as a
 //   HyperDHT mutable record under its DID key. eth_sig is an EIP-191 signature
 //   of the DID by the device's secp256k1 key, so the record binds the DID and
@@ -39,6 +41,7 @@
 #include "boat_buyer_nanopay.h"
 #include "boat_crypto.h"
 #include "hdht.h"
+#include "mer.h"
 
 enum {
   OP_WRITE = 1,
@@ -52,9 +55,9 @@ enum {
 #define RECORD_REPUBLISH_S 1800 // nodes keep mutable records for up to 48 hours
 
 static uv_loop_t loop;
-static hdht_t dht;
+hdht_t dht;
 static hdht_server_t server;
-static boat_keypair_t kp;
+boat_keypair_t kp;
 
 static char record[320]; // our DID record (283 bytes), the same bytes on every boot
 static size_t record_len;
@@ -75,7 +78,7 @@ static uint32_t ticks_down;
 static uint32_t ticks;
 static int64_t notify_started;
 
-static void
+void
 log_heap (const char *at) {
   printf("MER|heap at=%s free=%u min=%u largest=%u stack_free=%u\n", at, (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT), (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), (unsigned) uxTaskGetStackHighWaterMark(NULL));
 }
@@ -107,8 +110,7 @@ build_record (void) {
   printf("MER|record built len=%u eth_sign_ms=%ld\n", (unsigned) record_len, ms);
 }
 
-// Copies the string value of "key" from a flat JSON object.
-static bool
+bool
 json_str (const char *json, const char *key, char *out, size_t cap) {
   char pattern[24];
   snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
@@ -122,9 +124,7 @@ json_str (const char *json, const char *key, char *out, size_t cap) {
   return true;
 }
 
-// Checks that a DID record belongs to public_key and that its eth_sig was made
-// by its eth address; returns that address.
-static bool
+bool
 verify_record (const uint8_t public_key[32], const uint8_t *value, size_t len, uint8_t eth[20]) {
   static char json[HDHT_MUTABLE_MAX_VALUE + 1]; // off the loop task's stack
   memcpy(json, value, len);
@@ -161,6 +161,7 @@ on_record_put (hdht_t *d, int status, unsigned stored, void *data) {
   bool first = !record_published;
   record_published = true;
   if (first && has_seller) resolve_seller();
+  if (first) anchor_start();
 }
 
 static void
@@ -404,6 +405,7 @@ on_tick (uv_timer_t *t) {
 
   if (++ticks % 30 == 0) log_heap("tick");
   if (ticks % RECORD_REPUBLISH_S == 0) publish_record();
+  anchor_tick(ticks);
 }
 
 static void

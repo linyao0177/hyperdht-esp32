@@ -157,7 +157,7 @@ A connection goes like this:
 4. Each side sends UDP probes until one gets through.
 5. The UDX stream is connected on that socket and the SecretStream starts.
 
-The byte-level details are in [`docs/protocol.md`](docs/protocol.md). The design study that led here, including memory estimates and the alternatives considered, is in [`docs/feasibility.md`](docs/feasibility.md).
+How the pieces fit together as a base layer for products (identity, reachability, encrypted channels, signed records, trust model, roadmap) is in [`docs/architecture.md`](docs/architecture.md). The byte-level details are in [`docs/protocol.md`](docs/protocol.md). The design study that led here, including memory estimates and the alternatives considered, is in [`docs/feasibility.md`](docs/feasibility.md).
 
 ## Same key over BLE
 
@@ -176,9 +176,9 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`examples/minimal`](examples/minimal) | Start here: a device reachable by key, NVS identity, cross-task data |
 | [`examples/hyperdht_demo`](examples/hyperdht_demo) | Test firmware: client rounds, then server; optional BLE |
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
-| [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, nanopayments over HyperDHT |
-| [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller |
-| [`docs`](docs) | Protocol notes and the feasibility study |
+| [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, open anchor nodes, nanopayments over HyperDHT |
+| [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node and verifier |
+| [`docs`](docs) | Architecture, protocol notes and the feasibility study |
 | [`research/phase0`](research/phase0) | The original feasibility PoC (libsodium and libudx measurements) |
 | [`patches/libudx`](patches/libudx) | The libudx fixes, prepared for upstream |
 

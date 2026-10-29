@@ -8,6 +8,14 @@ config MER_SELLER_KEY
     string "HyperDHT public key (hex) of the seller to buy from, empty to only serve"
     default ""
 
+config MER_ANCHOR_NODES
+    string "Anchor nodes to submit signed readings to: comma-separated HyperDHT public keys (hex), empty for none"
+    default ""
+
+config MER_ANCHOR_INTERVAL_S
+    int "Seconds between anchored readings"
+    default 30
+
 config MER_CHAIN_ID
     int "EIP-712 chainId of the settlement chain"
     default 5042002
