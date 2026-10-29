@@ -22,6 +22,8 @@
 #define MAX_SEND     1024 // bytes per AT+SEND; also the +DATA chunk size
 #define REPUBLISH_MS (12 * 3600 * 1000) // records live 48 h on the DHT
 #define CLOSE_MS     5000 // AT+CLOSE: then closed outright if the peer has not ended
+#define MAX_TOPICS   4
+#define ANNOUNCE_MS  (10 * 60 * 1000) // announcements live 20 min on the DHT
 
 typedef struct {
   bool used;
@@ -45,7 +47,13 @@ static size_t record_len;
 static uint64_t record_seq;
 static bool putting, put_again; // put_again: the record changed during a put
 static uint64_t putting_seq;
-static uv_timer_t republish_timer, restart_timer;
+static uv_timer_t republish_timer, restart_timer, announce_timer;
+
+static bool has_relay;
+static uint8_t relay[32];
+
+static uint8_t topics[MAX_TOPICS][32];
+static size_t topics_len;
 
 static char hex[2 * HDHT_MUTABLE_MAX_VALUE + 1 > 2 * MAX_SEND + 1 ? 2 * HDHT_MUTABLE_MAX_VALUE + 1 : 2 * MAX_SEND + 1];
 static uint8_t bytes[HDHT_MUTABLE_MAX_VALUE > MAX_SEND ? HDHT_MUTABLE_MAX_VALUE : MAX_SEND];
@@ -126,6 +134,26 @@ save_allow (void) {
   if (nvs_open("module", NVS_READWRITE, &nvs) != ESP_OK) return;
   if (allow_len) nvs_set_blob(nvs, "allow", allow, allow_len * 32);
   else nvs_erase_key(nvs, "allow");
+  nvs_commit(nvs);
+  nvs_close(nvs);
+}
+
+static void
+save_relay (void) {
+  nvs_handle_t nvs;
+  if (nvs_open("module", NVS_READWRITE, &nvs) != ESP_OK) return;
+  if (has_relay) nvs_set_blob(nvs, "relay", relay, 32);
+  else nvs_erase_key(nvs, "relay");
+  nvs_commit(nvs);
+  nvs_close(nvs);
+}
+
+static void
+save_topics (void) {
+  nvs_handle_t nvs;
+  if (nvs_open("module", NVS_READWRITE, &nvs) != ESP_OK) return;
+  if (topics_len) nvs_set_blob(nvs, "topics", topics, topics_len * 32);
+  else nvs_erase_key(nvs, "topics");
   nvs_commit(nvs);
   nvs_close(nvs);
 }
@@ -282,6 +310,38 @@ static void
 on_close_timeout (uv_timer_t *t) {
   link_t *l = t->data;
   if (l->used && l->s) hdht_stream_destroy(l->s, HDHT_STREAM_ECLOSED);
+}
+
+// topics
+
+static void
+on_announced (hdht_t *d, int status, unsigned stored, void *data) {
+  (void) d;
+  port_printf("+ANNOUNCE:%s,%d,%u", to_hex(data, 32), status, stored);
+  free(data);
+}
+
+static void
+on_unannounced (hdht_t *d, int status, unsigned stored, void *data) {
+  (void) d;
+  port_printf("+UNANNOUNCE:%s,%d,%u", to_hex(data, 32), status, stored);
+  free(data);
+}
+
+static int
+announce_topic (const uint8_t topic[32], bool unannounce) {
+  uint8_t *copy = malloc(32);
+  if (copy == NULL) return HDHT_ENOMEM;
+  memcpy(copy, topic, 32);
+  int err = unannounce ? hdht_unannounce(&dht, copy, pk, sk, on_unannounced, copy) : hdht_announce(&dht, copy, pk, sk, on_announced, copy);
+  if (err) free(copy);
+  return err;
+}
+
+static void
+on_announce_timer (uv_timer_t *t) {
+  (void) t;
+  for (size_t i = 0; i < topics_len && dht_ready; i++) announce_topic(topics[i], false);
 }
 
 static void
@@ -628,6 +688,63 @@ at_line (char *line) {
     ok();
     return;
   }
+  if (strcmp(name, "AT+RELAY") == 0 && (set || query)) {
+    if (query) {
+      if (has_relay) {
+        char d[72];
+        did_of(relay, d);
+        port_printf("+RELAY:%s", d);
+      }
+      ok();
+      return;
+    }
+    if (args[0] == '\0') has_relay = false;
+    else if (parse_key(args, relay)) has_relay = true;
+    else {
+      error("bad did");
+      return;
+    }
+    save_relay();
+    hdht_set_relay(&dht, has_relay ? relay : NULL);
+    ok();
+    return;
+  }
+  if (strcmp(name, "AT+ANNOUNCE") == 0 && (set || query)) {
+    if (query) {
+      for (size_t i = 0; i < topics_len; i++) port_printf("+TOPIC:%s", to_hex(topics[i], 32));
+      ok();
+      return;
+    }
+    if (args[0] == '\0') {
+      for (size_t i = 0; i < topics_len; i++) announce_topic(topics[i], true);
+      topics_len = 0;
+      save_topics();
+      ok();
+      return;
+    }
+    uint8_t topic[32];
+    if (strlen(args) != 64 || sodium_hex2bin(topic, 32, args, 64, NULL, NULL, NULL) != 0) {
+      error("bad topic: 64 hex characters");
+      return;
+    }
+    bool known = false;
+    for (size_t i = 0; i < topics_len; i++) known = known || memcmp(topics[i], topic, 32) == 0;
+    if (!known) {
+      if (topics_len == MAX_TOPICS) {
+        error("too many topics");
+        return;
+      }
+      memcpy(topics[topics_len++], topic, 32);
+      save_topics();
+    }
+    if (announce_topic(topic, false) != 0) {
+      error("announce failed to start");
+      return;
+    }
+    uv_timer_start(&announce_timer, on_announce_timer, ANNOUNCE_MS, ANNOUNCE_MS);
+    ok();
+    return;
+  }
   if (strcmp(name, "AT+LOOKUP") == 0 && set) {
     uint8_t *topic = malloc(32);
     if (topic == NULL || strlen(args) != 64 || sodium_hex2bin(topic, 32, args, 64, NULL, NULL, NULL) != 0) {
@@ -650,6 +767,7 @@ void
 at_init (void) {
   uv_timer_init(&loop, &republish_timer);
   uv_timer_init(&loop, &restart_timer);
+  uv_timer_init(&loop, &announce_timer);
   for (int i = 0; i < MAX_LINKS; i++) {
     uv_timer_init(&loop, &links[i].close_timer);
     links[i].close_timer.data = &links[i];
@@ -662,12 +780,22 @@ at_init (void) {
   len = sizeof(record);
   if (nvs_get_blob(nvs, "record", record, &len) == ESP_OK) record_len = len;
   nvs_get_u64(nvs, "rec_seq", &record_seq);
+  len = 32;
+  has_relay = nvs_get_blob(nvs, "relay", relay, &len) == ESP_OK;
+  len = sizeof(topics);
+  if (nvs_get_blob(nvs, "topics", topics, &len) == ESP_OK) topics_len = len / 32;
   nvs_close(nvs);
 }
 
-// the DHT came up: republish our record and listen if asked to
+// the DHT came up: use the relay, republish our record and topics, and
+// listen if asked to
 void
 at_dht_ready (void) {
+  if (has_relay) hdht_set_relay(&dht, relay);
+  if (topics_len) {
+    on_announce_timer(NULL);
+    uv_timer_start(&announce_timer, on_announce_timer, ANNOUNCE_MS, ANNOUNCE_MS);
+  }
   if (record_len) {
     put_record();
     uv_timer_start(&republish_timer, on_republish, REPUBLISH_MS, REPUBLISH_MS);

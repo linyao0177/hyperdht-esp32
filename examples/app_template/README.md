@@ -136,5 +136,5 @@ The test run found one bug, fixed before the second round. A reader whose sessio
 
 - **4 sessions at a time** (`MAX_SESSIONS`). Each costs ~25 KB of heap while connected.
 - **One owner.** To transfer ownership, release the device and let the new owner claim it.
-- **Peers must know the device's DID.** The device does not announce under a topic yet. Share the DID with the setup code or through the owner.
-- **No relay fallback**: a device behind a random NAT cannot be reached; see the main README.
+- **Peers must know the device's DID.** Share it with the setup code or through the owner. `hdht_announce` can also publish it under a topic, but anyone can then find the device, so keep the setup code private.
+- **A device behind a random NAT** needs `hdht_set_relay` and a relay node; see the main README.

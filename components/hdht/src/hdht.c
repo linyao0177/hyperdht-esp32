@@ -84,6 +84,12 @@ hdht_add_local_address (hdht_t *dht, const uint8_t ip[4]) {
   a->port = dht->socket.local_port;
 }
 
+void
+hdht_set_relay (hdht_t *dht, const uint8_t relay_public_key[32]) {
+  dht->has_relay = relay_public_key != NULL;
+  if (relay_public_key) memcpy(dht->relay, relay_public_key, 32);
+}
+
 typedef struct {
   hdht_ready_cb cb;
 } bootstrap_req_t;

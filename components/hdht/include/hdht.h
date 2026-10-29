@@ -55,6 +55,7 @@ typedef enum {
   HDHT_CONNECT_EHOLEPUNCH = -104,
   HDHT_CONNECT_ETIMEOUT = -105,
   HDHT_CONNECT_ENOMEM = -106,
+  HDHT_CONNECT_ERELAY = -107, // the blind relay could not pair us
 } hdht_connect_error_t;
 
 // Connects to the server announced under remote_public_key. stream is caller
@@ -166,7 +167,7 @@ hdht_mutable_verify (const uint8_t public_key[32], uint64_t seq, const uint8_t *
 // Topic lookup
 //
 // Finds the public keys announced under a topic (hyperdht's lookup, the peers
-// a Hyperswarm server announces). The reply is unsigned, so treat each key as
+// a Hyperswarm server announces), and announces our own. The reply is unsigned, so treat each key as
 // a hint and authenticate it by connecting. An operation still running when
 // the DHT is destroyed never calls back.
 
@@ -180,5 +181,50 @@ typedef void (*hdht_lookup_cb)(hdht_t *dht, int status, const uint8_t (*peers)[3
 
 int
 hdht_lookup (hdht_t *dht, const uint8_t topic[32], hdht_lookup_cb cb, void *data);
+
+// Announces public_key under a topic so hdht_lookup and Hyperswarm clients
+// find it; pair it with hdht_listen on the same key so they can connect.
+// Nodes keep an announcement for 20 minutes: announce again about every 10.
+// status is 0 when at least one node stored it.
+typedef void (*hdht_announce_cb)(hdht_t *dht, int status, unsigned stored, void *data);
+
+int
+hdht_announce (hdht_t *dht, const uint8_t topic[32], const uint8_t public_key[32], const uint8_t secret_key[64], hdht_announce_cb cb, void *data);
+
+int
+hdht_unannounce (hdht_t *dht, const uint8_t topic[32], const uint8_t public_key[32], const uint8_t secret_key[64], hdht_announce_cb cb, void *data);
+
+// Blind relay (relay.c)
+//
+// Peers that cannot holepunch, such as a device behind a random (symmetric)
+// NAT, can meet at a relay node: any hyperdht peer running a blind-relay
+// server, as hyperdht's relayThrough. The relay forwards encrypted UDX packets
+// and cannot read them. A connection uses a relay when either side asks:
+// - hdht_set_relay(dht, key): our connects and our servers use this relay,
+//   without trying a direct path first;
+// - a peer that sets relayThrough: we pair at the relay it names.
+// The relay node must be reachable on our main socket (a public address, or
+// our LAN); a relay that needs holepunching itself is refused.
+
+void
+hdht_set_relay (hdht_t *dht, const uint8_t relay_public_key[32]); // NULL: only when the peer asks
+
+typedef struct hdht_relay_s hdht_relay_t;
+
+// status 0 with the id of the stream the relay made for us, or an error.
+typedef void (*hdht_relay_cb)(hdht_relay_t *relay, int status, uint32_t remote_id, void *data);
+
+// Connects to the relay node and asks it to pair stream_id under token.
+// Used by connect.c and server.c; cb runs once unless cancelled.
+int
+hdht_relay_pair (hdht_t *dht, const uint8_t relay_public_key[32], const uint8_t token[32], bool initiator, uint32_t stream_id, hdht_relay_cb cb, void *data, hdht_relay_t **out);
+
+void
+hdht_relay_cancel (hdht_relay_t *relay);
+
+// After a successful pair: connects stream through the relay. The relay
+// connection then lives exactly as long as the stream.
+int
+hdht_relay_connect (hdht_relay_t *relay, hdht_stream_t *stream, uint32_t remote_id);
 
 #endif

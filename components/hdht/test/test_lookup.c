@@ -1,6 +1,9 @@
-// Lists the public keys announced under a topic.
+// Lists the public keys announced under a topic, or announces one and then
+// lists them.
 //
 //   test_lookup <host:port | public> <hex topic>
+//   test_lookup <host:port | public> <hex topic> announce <hex seed>
+//   test_lookup <host:port | public> <hex topic> unannounce <hex seed>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +16,8 @@
 static hdht_t dht;
 static int exit_code = 1;
 static uint8_t topic[32];
+static uint8_t public_key[32], secret_key[64];
+static bool announcing, unannouncing;
 
 static void
 on_destroyed (hdht_t *d) {
@@ -33,8 +38,20 @@ on_lookup (hdht_t *d, int status, const uint8_t (*peers)[32], size_t len, void *
 }
 
 static void
+on_announced (hdht_t *d, int status, unsigned stored, void *data) {
+  (void) data;
+  printf("announce status=%d stored=%u\n", status, stored);
+  if (status != 0 || hdht_lookup(d, topic, on_lookup, NULL) != 0) hdht_destroy(d, on_destroyed);
+}
+
+static void
 on_ready (hdht_t *d, int status) {
   printf("bootstrapped status=%d table=%u\n", status, d->table_len);
+  if (announcing || unannouncing) {
+    int err = announcing ? hdht_announce(d, topic, public_key, secret_key, on_announced, NULL) : hdht_unannounce(d, topic, public_key, secret_key, on_announced, NULL);
+    if (err) hdht_destroy(d, on_destroyed);
+    return;
+  }
   if (hdht_lookup(d, topic, on_lookup, NULL) != 0) {
     printf("start failed\n");
     hdht_destroy(d, on_destroyed);
@@ -44,8 +61,18 @@ on_ready (hdht_t *d, int status) {
 int
 main (int argc, char **argv) {
   if (argc < 3 || sodium_init() < 0 || sodium_hex2bin(topic, 32, argv[2], strlen(argv[2]), NULL, NULL, NULL) != 0) {
-    fprintf(stderr, "usage: test_lookup <host:port | public> <hex topic>\n");
+    fprintf(stderr, "usage: test_lookup <host:port | public> <hex topic> [announce | unannounce <hex seed>]\n");
     return 1;
+  }
+  if (argc > 4 && (strcmp(argv[3], "announce") == 0 || strcmp(argv[3], "unannounce") == 0)) {
+    uint8_t seed[32];
+    if (sodium_hex2bin(seed, 32, argv[4], strlen(argv[4]), NULL, NULL, NULL) != 0) return 1;
+    hdht_keypair(public_key, secret_key, seed);
+    char hex[65];
+    sodium_bin2hex(hex, sizeof(hex), public_key, 32);
+    printf("announcing %s\n", hex);
+    announcing = argv[3][0] == 'a';
+    unannouncing = !announcing;
   }
 
   const char *bootstrap[] = {argv[1]};

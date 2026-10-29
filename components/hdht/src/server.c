@@ -1,5 +1,6 @@
 // Server (hyperdht/lib/server.js + announcer.js): announce our key to the
-// closest nodes, answer relayed Noise handshakes, and holepunch with clients.
+// closest nodes, answer relayed Noise handshakes, and holepunch with clients,
+// or pair with them at a blind relay when either side asks (relay.c).
 
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,11 @@ struct hdht_server_handshake_s {
   uint8_t local_secret[32];
   bool has_secret;
   uint32_t round;
+
+  // blind relay instead of holepunching
+  bool relaying;
+  hdht_relay_t *relay; // pairing, until it reports
+  uint8_t relay_token[32];
 
   // a holepunch request waiting for NAT analysis
   bool deferred;
@@ -90,6 +96,8 @@ clear_now (hdht_server_handshake_t *h) {
 
   if (h->puncher) hdht_puncher_destroy(h->puncher);
   h->puncher = NULL;
+  if (h->relay) hdht_relay_cancel(h->relay);
+  h->relay = NULL;
   destroy_pending_stream(h);
   sodium_memzero(h->holepunch_secret, sizeof(h->holepunch_secret));
 
@@ -114,6 +122,8 @@ static void
 abort_handshake (hdht_server_handshake_t *h) {
   if (h->puncher) hdht_puncher_destroy(h->puncher);
   h->puncher = NULL;
+  if (h->relay) hdht_relay_cancel(h->relay);
+  h->relay = NULL;
   destroy_pending_stream(h);
   clear_later(h);
 }
@@ -154,6 +164,8 @@ static bool
 on_stream_firewall (hdht_stream_t *stream, hdht_socket_t *socket, const hdht_addr_t *from) {
   hdht_server_handshake_t *h = stream->owner;
   if (h == NULL || socket == NULL) return false;
+  // relayed: the relay forwards before it tells us our stream id; UDX resends
+  if (h->relaying) return false;
   on_socket(h, socket, from);
   return stream->connected;
 }
@@ -191,6 +203,46 @@ setup_puncher (hdht_server_handshake_t *h) {
 }
 
 // PEER_HANDSHAKE
+
+// blind relay (server.js _relayConnection)
+
+static void
+on_relay_paired (hdht_relay_t *r, int status, uint32_t remote_id, void *data) {
+  hdht_server_handshake_t *h = data;
+  h->relay = NULL;
+  hdht_stream_t *stream = h->stream;
+  if (status != 0 || stream == NULL) {
+    if (status == 0) hdht_relay_cancel(r);
+    abort_handshake(h);
+    return;
+  }
+
+  h->stream = NULL;
+  stream->owner = NULL;
+  stream->on_firewall = NULL;
+  uv_timer_stop(&h->timer);
+  clear_later(h);
+
+  if (hdht_relay_connect(r, stream, remote_id) != 0) {
+    hdht_relay_cancel(r);
+    hdht_stream_destroy(stream, HDHT_STREAM_ECONNECT);
+    return;
+  }
+
+  hdht_server_t *s = h->server;
+  s->stats.connections++;
+  if (s->on_connection) s->on_connection(s, stream);
+}
+
+// Our relay when we have one, as server.js: then we are the initiator.
+static bool
+start_relay (hdht_server_handshake_t *h) {
+  hdht_t *dht = h->server->dht;
+  bool mine = dht->has_relay;
+  const uint8_t *key = mine ? dht->relay : h->remote.relay_through_public_key;
+  const uint8_t *token = mine ? h->relay_token : h->remote.relay_through_token;
+  return hdht_relay_pair(dht, key, token, mine, h->stream->local_id, on_relay_paired, h, &h->relay) == 0;
+}
 
 static hdht_server_handshake_t *
 add_handshake (hdht_server_t *s, const hdht_incoming_t *req, const hdht_handshake_msg_t *hs, const uint8_t msg1_hash[32]) {
@@ -244,15 +296,26 @@ add_handshake (hdht_server_t *s, const hdht_incoming_t *req, const hdht_handshak
     }
   }
 
+  h->relaying = error == HDHT_ERROR_NONE && (dht->has_relay || h->remote.has_relay_through);
+
   hdht_noise_payload_t payload = {0};
   payload.version = 1;
   payload.error = error;
   payload.firewall = HDHT_FIREWALL_UNKNOWN; // we never have a stable public address
+  // holepunch info even when relaying: without it the client would try our
+  // public address directly instead of waiting for the relay
   payload.has_holepunch = true;
   payload.holepunch_id = h->id;
   payload.relays_len = s->relays_len;
   memcpy(payload.relays, s->relays, sizeof(payload.relays));
-  for (int i = 0; i < dht->local_addresses_len && payload.addresses4_len < HDHT_MAX_ADDRESSES; i++) {
+  if (h->relaying && dht->has_relay) {
+    payload.has_relay_through = true;
+    memcpy(payload.relay_through_public_key, dht->relay, 32);
+    randombytes_buf(h->relay_token, 32);
+    memcpy(payload.relay_through_token, h->relay_token, 32);
+  }
+  // no LAN addresses when relaying, so the client tries no LAN shortcut
+  for (int i = 0; !h->relaying && i < dht->local_addresses_len && payload.addresses4_len < HDHT_MAX_ADDRESSES; i++) {
     payload.addresses4[payload.addresses4_len] = dht->local_addresses[i];
     payload.addresses4[payload.addresses4_len++].port = dht->socket.local_port;
   }
@@ -290,6 +353,15 @@ add_handshake (hdht_server_t *s, const hdht_incoming_t *req, const hdht_handshak
 
   h->has_secret = true;
   randombytes_buf(h->local_secret, sizeof(h->local_secret));
+
+  if (h->relaying) {
+    if (!start_relay(h)) {
+      abort_handshake(h);
+      return h;
+    }
+    uv_timer_start(&h->timer, on_prepunch_timeout, 2 * HANDSHAKE_TIMEOUT_MS, 0);
+    return h;
+  }
 
   // same public IP: the client will try our LAN address, keep replying from the main socket
   bool same_ip = memcmp(h->client_addr.ip, req->to.ip, 4) == 0;
@@ -454,7 +526,17 @@ on_peer_holepunch (hdht_server_t *s, const hdht_incoming_t *req) {
   if (msg.mode != HDHT_MODE_FROM_RELAY || !msg.has_peer_address) return;
 
   hdht_server_handshake_t *h = msg.id < HDHT_SERVER_MAX_HANDSHAKES ? s->handshakes[msg.id] : NULL;
-  if (h == NULL || h->closed || !h->has_secret || h->puncher == NULL) return;
+  if (h == NULL || h->closed || !h->has_secret) return;
+
+  // relaying: refuse to punch, so the client waits for the relay instead
+  if (h->relaying) {
+    hdht_holepunch_payload_t refuse = {0};
+    refuse.error = HDHT_ERROR_ABORTED;
+    refuse.round = h->round;
+    send_holepunch_reply(h, req, &msg.peer_address, &refuse, &s->dht->socket);
+    return;
+  }
+  if (h->puncher == NULL) return;
 
   hdht_holepunch_payload_t remote;
   if (hdht_holepunch_payload_open(&remote, h->holepunch_secret, msg.payload, msg.payload_len) != 0) return;

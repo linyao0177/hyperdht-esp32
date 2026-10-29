@@ -78,6 +78,7 @@ struct hdht_stream_s {
   hdht_stream_firewall_cb on_firewall;
   void *data;  // user data
   void *owner; // connect/server state that created the stream
+  struct hdht_relay_s *relay; // the relay connection this stream runs through, if any
 
   struct {
     uint64_t bytes_in;
@@ -107,5 +108,14 @@ hdht_stream_end (hdht_stream_t *stream);
 
 void
 hdht_stream_destroy (hdht_stream_t *stream, int error);
+
+// connect.c: hdht_connect, or never through a relay (the connection to a relay)
+struct hdht_s;
+int
+hdht__connect (struct hdht_s *dht, hdht_stream_t *stream, const uint8_t remote_public_key[32], hdht_stream_open_cb on_open, hdht_stream_data_cb on_data, hdht_stream_close_cb on_close, void *data, bool no_relay);
+
+// relay.c: the relayed stream closed, so its relay connection goes too
+void
+hdht__relay_unbind (struct hdht_relay_s *relay);
 
 #endif

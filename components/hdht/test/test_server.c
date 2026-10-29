@@ -1,6 +1,8 @@
 // Announces a server (seed 0x22 * 32) and echoes every connection.
 //
 //   test_server <bootstrap host:port> [seconds]
+//
+// HDHT_RELAY=<hex key> connects (or accepts) through that blind relay only.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,6 +112,9 @@ main (int argc, char **argv) {
   const char *bootstrap[] = {argv[1]};
   hdht_opts_t opts = {.bootstrap = bootstrap, .bootstrap_len = 1};
   if (hdht_init(&dht, uv_default_loop(), &opts) != 0) return 1;
+  const char *relay = getenv("HDHT_RELAY");
+  uint8_t relay_key[32];
+  if (relay && sodium_hex2bin(relay_key, 32, relay, strlen(relay), NULL, NULL, NULL) == 0) hdht_set_relay(&dht, relay_key);
   add_local_addresses();
 
   uv_timer_init(uv_default_loop(), &stop_timer);

@@ -2,7 +2,7 @@
 
 [`examples/uart_module`](../examples/uart_module) turns the ESP32-C3 into a network module. A host MCU uses it the way it would use an AT-command WiFi module: one text command per line over a serial port. The module handles WiFi, its identity, peer-to-peer connections by DID, signed records and topic lookup. The host needs no network stack and no cryptography of its own.
 
-Version: `hdht-module/0.1`.
+Version: `hdht-module/0.2`.
 
 ## Wiring
 
@@ -78,6 +78,17 @@ Up to 4 links at a time, numbered 0–3.
 | `AT+PUT=<hex>` / `AT+PUTT=<text>` | `+RECORD:<seq>` | **DHT**. Publishes the module's own record, up to 1000 bytes, under its DID. Then `+PUT` for that seq. The record is kept in NVS and republished after every restart and every 12 h. A put sent while another is in flight waits for it |
 | `AT+GET=<did>` | — | **DHT**. Then `+GET` with the record of that DID, checked against its key |
 | `AT+LOOKUP=<topic hex>` | — | **DHT**. Then `+LOOKUP` with the DIDs announced under the topic |
+| `AT+ANNOUNCE=<topic hex>` | — | **DHT**. Announces the module under the topic (up to 4, kept in NVS, refreshed every 10 min and after each restart). Then `+ANNOUNCE`. Use with `AT+LISTEN=1`, so that peers who find it can connect |
+| `AT+ANNOUNCE=` | — | **DHT**. Stops announcing and unannounces every topic. Then `+UNANNOUNCE` per topic. A few copies can remain until they expire (20 min) |
+| `AT+ANNOUNCE?` | `+TOPIC:<topic hex>` per topic | **DHT** |
+
+### Relay
+
+| Command | Result | |
+|---|---|---|
+| `AT+RELAY=<did>` | — | **DHT**. From now on every connection, outbound and inbound, goes through this blind-relay node instead of holepunching. Kept in NVS. This is for modules behind a random (symmetric) NAT, such as many 4G routers, which cannot be holepunched. The relay forwards encrypted packets and cannot read them |
+| `AT+RELAY=` | — | **DHT**. Back to direct connections. A peer that asks for a relay still gets one |
+| `AT+RELAY?` | `+RELAY:<did>`, or nothing | **DHT** |
 
 ## Events
 
@@ -90,10 +101,11 @@ Up to 4 links at a time, numbered 0–3.
 | `+CONN:<link>,<did>,<IN/OUT>` | a link opened. The peer's DID is authenticated by the handshake |
 | `+DENIED:<did>,<reason>` | an inbound peer was refused: `not allowed` or `no free link` |
 | `+DATA:<link>,<length>,<hex>` | a message from the peer. A message over 1024 bytes arrives as several events, in order |
-| `+CLOSED:<link>,<error>` | the link is gone. 0 is a clean end, -12 means closed by `AT+CLOSE` after the timeout, and -100…-106 mean a connect failed |
+| `+CLOSED:<link>,<error>` | the link is gone. 0 is a clean end, -12 means closed by `AT+CLOSE` after the timeout, -100…-106 mean a connect failed, and -107 means the relay could not pair the two sides |
 | `+PUT:<status>,<nodes stored>,<seq>` | a record put finished. Status 0 means at least one node stored it |
 | `+GET:<did>,<status>,<seq>,<hex>` | status 0 with the value, or -110 if not found |
 | `+LOOKUP:<topic>,<status>,<count>[,<did>...]` | up to 16 DIDs. They are hints, not proof: connect to authenticate, and check the peer's record |
+| `+ANNOUNCE:<topic>,<status>,<nodes>` / `+UNANNOUNCE:<topic>,<status>,<nodes>` | an announce or unannounce finished. Status 0 means at least one node took it |
 
 ## A session
 
@@ -132,8 +144,8 @@ The host is a meter. It publishes what it is, waits for its operator's app to co
 
 ## Host notes
 
-- **Retry connects, and time them out.** A connect can fail with `+CLOSED:<link>,-100` (peer not found), most often right after the peer starts, before its announcement has spread. In the test runs, 2 of 13 connects to peers that had just started failed: one with -100, and one that gave no `+CONN` within 60 s. Both retries worked.
+- **Retry connects, and time them out.** A connect can fail with `+CLOSED:<link>,-100` (peer not found), most often right after the peer starts, before its announcement has spread. In the test runs, 5 of 22 connects to peers started seconds earlier failed: four with -100, and one that gave no `+CONN` within 60 s. Every retry worked.
 - **Network operations take seconds.** In the test runs, a connect took about 3 s, a record put 4–10 s, and a get about 5 s. Do not block the host's main loop waiting for them.
 - **One command at a time.** Wait for `OK` or `ERROR`. The module queues up to 4 lines and answers `ERROR:busy` beyond that.
-- **The module keeps the identity, network, allow list and record across restarts.** Listening does not persist: send `AT+LISTEN=1` after each boot.
+- **The module keeps the identity, network, allow list, record, topics and relay across restarts.** Listening does not persist: send `AT+LISTEN=1` after each boot.
 - **Signing is the module's key, not the host's.** What it proves is that this module produced the signature. Data the host feeds in is only as trustworthy as the host and its wiring.

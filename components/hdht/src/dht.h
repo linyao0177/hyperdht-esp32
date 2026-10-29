@@ -207,6 +207,8 @@ struct hdht_s {
   uint8_t secret_key[64];
   hdht_addr_t local_addresses[2]; // LAN IPv4s, port filled from the main socket
   uint8_t local_addresses_len;
+  bool has_relay; // connect and accept through this blind relay (hdht_set_relay)
+  uint8_t relay[32];
   struct hdht_server_s *servers;
 
   bool destroyed;

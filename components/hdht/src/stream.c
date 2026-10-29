@@ -207,6 +207,11 @@ on_read (udx_stream_t *udx, ssize_t read_len, const uv_buf_t *buf) {
 static void
 closed_one (hdht_stream_t *stream) {
   if (--stream->pending_closes > 0) return;
+  if (stream->relay) {
+    struct hdht_relay_s *relay = stream->relay;
+    stream->relay = NULL;
+    hdht__relay_unbind(relay);
+  }
   if (stream->on_close) stream->on_close(stream, stream->error);
   if (stream->free_on_close) free(stream);
 }

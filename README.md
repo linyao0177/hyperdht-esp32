@@ -191,9 +191,9 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 
 ## Limitations
 
-- **Random NAT on the device side**: no holepunching. hyperdht handles this case with up to 256 sockets ("birthday" punching), which a C3 cannot afford. A device behind a consistent NAT can still reach peers behind random NATs.
-- **No relay fallback yet** (`blind-relay` / `relayThrough`), so connections that cannot be holepunched fail.
-- **Not implemented**: announcing under a Hyperswarm topic from the device (looking one up works), immutable records, Protomux, IPv6, reusable sockets, unordered UDX messages.
+- **Random NAT on the device side**: no holepunching. hyperdht handles this case with up to 256 sockets ("birthday" punching), which a C3 cannot afford. Such a device connects through a blind relay instead (`hdht_set_relay`), which needs a relay node with a public address. A device behind a consistent NAT can still reach peers behind random NATs directly.
+- **Relayed connections stay relayed**: hyperdht upgrades a relayed connection to a direct one when holepunching later succeeds; hdht does not.
+- **Not implemented**: immutable records, general Protomux (only the blind-relay channel), IPv6, reusable sockets, unordered UDX messages.
 - **The device is never a DHT routing node**: it is always an ephemeral, firewalled node, by design.
 - **ESP32-C3 only** for now. Other ESP32 variants should work but are untested.
 - **Power**: a server keeps WiFi on and pings its relay nodes every 3 s. Battery devices fit the client role, or BLE.
@@ -202,8 +202,8 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 ## Contributing
 
 Issues and pull requests are welcome, especially:
-- relay fallback through blind-relay
-- Hyperswarm topics
+- upgrading relayed connections to direct ones
+- a public relay node service
 - other ESP32 targets
 - smaller and faster crypto paths (an IRAM BLAKE2b, fixed-point BBR)
 - a phone app over BLE

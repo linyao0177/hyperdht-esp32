@@ -66,7 +66,7 @@ How it maps to the Holepunch stack:
 | Layer | Holepunch (JS) | On the module |
 |---|---|---|
 | Apps, storage | Pear, Hypercore, Autobase | Out of scope on the device; peers can run them |
-| Discovery by topic | Hyperswarm | Lookup: the device finds peers announced under a topic (`hdht_lookup`). It does not announce itself under one; peers dial it by key |
+| Discovery by topic | Hyperswarm | `hdht_lookup` / `hdht_announce`: the device finds peers announced under a topic, and announces itself |
 | Peer connections | hyperdht | `components/hdht` (C) |
 | Records | hyperdht `mutablePut` / `mutableGet` | `hdht_mutable_put` / `hdht_mutable_get` |
 | DHT RPC | dht-rpc | `components/hdht` (C) |
@@ -86,8 +86,8 @@ These are the building blocks a product gets. Each is usable on its own.
 | Records | `hdht_mutable_put / get` | A signed value of up to 1000 bytes stored on the ~20 DHT nodes closest to the key; anyone can read and verify it | Done |
 | Local channel | `components/hdht_ble`, `secret_stream.h` | The same SecretStream over BLE GATT (or any byte stream), keyed by the same identity | Done |
 | Topic lookup | `hdht_lookup` | Finding peers announced under a topic, such as Hyperswarm servers; the replies are hints, authenticated by connecting | Done |
-| Topic announce | Hyperswarm | Being found by topic instead of by key | Not yet |
-| Relay fallback | blind-relay | Connections that cannot be holepunched | Not yet |
+| Topic announce | `hdht_announce` / `hdht_unannounce` | Being found by topic instead of by key | Done |
+| Relay | `hdht_set_relay`; the peer's `relayThrough` | Connections that cannot be holepunched, such as from behind a random NAT, through a blind-relay node | Done; stays relayed, with no direct upgrade |
 
 ## Identity
 
@@ -249,9 +249,8 @@ Known limits today, roughly in order of impact for products:
 
 | Gap | Effect | Direction |
 |---|---|---|
-| No relay fallback | Peer pairs that cannot holepunch cannot connect | Implement blind-relay (`relayThrough`) |
-| Random NAT on the device side | Holepunching fails; hyperdht's 256-socket approach does not fit a C3 | Relay fallback covers it |
-| No topic announce from the device | Peers must already know the device's key (the device can look topics up) | Announce under a topic hash, as hyperdht's announcer |
+| Relays must be run | A device behind a random NAT needs a blind-relay node with a public address; there is no public service yet | Run relay nodes, and let devices find them by topic |
+| Relayed connections stay relayed | Traffic keeps going through the relay even when a direct path would work | Upgrade to direct after a later holepunch, as hyperdht does |
 | No admission | Any key can claim to be a device | Manufacturer credentials in the DID record, with a revocation list on a chain or an append-only log |
 | No key rotation | A new key is a new DID | A signed "moved to" record, or controller keys in the DID record |
 | No listing | The DHT looks up by key only | An indexer over records, e.g. a Hypercore/Hyperbee log written by the issuer |

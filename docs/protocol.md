@@ -264,6 +264,33 @@ puncher addr}` to the client.
 - The peers in a reply are not signed (the node checked the ANNOUNCE signature when storing it), so a client
   should treat them as hints and authenticate by connecting. Announcements expire after 20 minutes unless
   refreshed; Hyperswarm and `dht.announce` refresh them.
+- Announce under a topic (index.js announce): a LOOKUP query towards the topic for tokens, then ANNOUNCE to the
+  closest nodes with the same signed value a server sends for `BLAKE2b(publicKey)` (`peer` + signature over
+  `NS_ANNOUNCE || BLAKE2b(target || node id || token || peer)`), with the topic as target. Unannounce
+  (lookupAndUnannounce) sends UNANNOUNCE, signed with `NS_UNANNOUNCE`, to every node whose lookup reply still
+  lists our key. A node replies only when the signature verifies.
+
+## Blind relay (lib/connect.js, lib/server.js relayConnection; blind-relay 1.6; protomux)
+
+- Either side may put `relayThrough{uint version=1, uint flags=0, fixed32 publicKey, fixed32 token}` (noise
+  payload flag 32) in its handshake payload. The server's relay wins. The side whose relay is used pairs as
+  initiator; the other uses that key and token and is not the initiator. JS tries holepunching alongside, and
+  upgrades to a direct path when it works.
+- Both sides `dht.connect(relayPublicKey)` and speak protomux over that SecretStream. One SecretStream message
+  is one frame: `uint channel, uint type, payload`. Channel 0 is control: type 1 open
+  `{uint localId, string protocol, buffer id}`, 2 reject `{uint remoteId}`, 3 close `{uint localId}`, 0 batch
+  `{uint channel, then (uint length, message) repeated, length 0 switching to {uint channel}}`.
+- The client opens channel `blind-relay` with `id = its own public key` (the relay accepts sessions keyed by the
+  remote key), no handshake. Messages on it: type 0 pair `{u8 flags (bit 0 isInitiator), fixed32 token, uint
+  stream id, uint seq=0}`, type 1 unpair `{u8 flags, fixed32 token}`.
+- Each side sends pair with the id of its own UDX stream for the peer connection. When both sides with the same
+  token have asked, the relay creates a UDX stream per side, links them, and answers each with pair carrying the
+  id of the stream it made for that side.
+- Each side then connects its UDX stream to the relay's address, on the socket of its relay connection, with
+  that id as the remote id, and starts SecretStream with the keys from the peer handshake. The relay only
+  forwards packets.
+- The relay can forward the peer's first packets before its pair answer arrives. The server's raw-stream
+  firewall lets packets from the relay socket through without treating them as a direct path.
 
 ## SecretStream in-band handshake (lib/handshake.js)
 

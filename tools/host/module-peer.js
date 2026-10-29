@@ -8,6 +8,8 @@
 //                             --half-open never ends its side, like a stuck peer
 //   dial <did> <text>         connects, sends text, prints the first reply
 //   get <did>                 reads and prints a mutable record (checked by hyperdht)
+//   lookup <hex topic>        prints the keys announced under a topic, each with
+//                             the number of nodes listing it
 //
 // Every output line starts with PEER| so a test can find it.
 
@@ -70,9 +72,21 @@ async function get (did) {
   await dht.destroy()
 }
 
-const commands = { serve, dial, get }
+async function lookup (topic) {
+  const keys = new Map()
+  for await (const reply of dht.lookup(Buffer.from(topic, 'hex'))) {
+    for (const peer of reply.peers) {
+      const did = 'did:mw:' + peer.publicKey.toString('hex')
+      keys.set(did, (keys.get(did) || 0) + 1)
+    }
+  }
+  console.log('PEER|found ' + [...keys].map(([did, n]) => did + '=' + n).join(','))
+  await dht.destroy()
+}
+
+const commands = { serve, dial, get, lookup }
 if (!commands[command]) {
-  console.error('usage: node module-peer.js <serve | dial | get> [args]')
+  console.error('usage: node module-peer.js <serve | dial | get | lookup> [args]')
   process.exit(1)
 }
 commands[command](...args)

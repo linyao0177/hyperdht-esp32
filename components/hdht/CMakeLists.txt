@@ -14,6 +14,7 @@ set(HDHT_SOURCES
   src/messages.c
   src/mutable.c
   src/noise.c
+  src/relay.c
   src/secret_stream.c
   src/server.c
   src/stream.c

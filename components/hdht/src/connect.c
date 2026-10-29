@@ -1,6 +1,7 @@
 // Client connect (hyperdht/lib/connect.js): find the server's relay nodes,
 // run the Noise handshake through one of them, then connect directly, over
-// the LAN, or by holepunching.
+// the LAN, by holepunching, or through a blind relay when either side asks
+// for one (relay.c).
 
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,7 @@ enum {
   C_HOLEPUNCH_WAIT,
   C_HOLEPUNCH_ROUND,
   C_PUNCHING,
+  C_RELAYING,
   C_DONE,
 };
 
@@ -61,6 +63,11 @@ struct hdht_connect_s {
   hdht_request_t *holepunch_req;
   hdht_request_t *lan_req;
   hdht_addr_t lan_addr;
+
+  hdht_relay_t *relay; // pairing, until it reports
+  uint8_t relay_token[32];
+  bool use_relay; // ours; off for the connection to a relay itself
+  bool no_relay;  // never pair, even when the server asks
 
   uv_timer_t timer;    // sleeps between holepunch steps
   uv_timer_t deadline; // whole connect
@@ -107,6 +114,8 @@ finish (hdht_connect_t *c, int error) {
   cancel_requests(c);
   if (c->puncher) hdht_puncher_destroy(c->puncher);
   c->puncher = NULL;
+  if (c->relay) hdht_relay_cancel(c->relay);
+  c->relay = NULL;
   hdht_noise_clear(&c->noise);
   sodium_memzero(c->holepunch_secret, sizeof(c->holepunch_secret));
 
@@ -145,6 +154,8 @@ static bool
 on_stream_firewall (hdht_stream_t *stream, hdht_socket_t *socket, const hdht_addr_t *from) {
   hdht_connect_t *c = stream->owner;
   if (c == NULL || c->state == C_FINDING || c->state == C_DONE || socket == NULL) return false;
+  // relayed: the relay forwards before it tells us our stream id; UDX resends
+  if (c->state == C_RELAYING) return false;
   connect_stream(c, socket, from);
   return stream->connected;
 }
@@ -435,6 +446,30 @@ pick_lan_address (hdht_connect_t *c, hdht_addr_t *out) {
   return true;
 }
 
+// blind relay (connect.js relayConnection)
+
+static void
+on_relay_paired (hdht_relay_t *r, int status, uint32_t remote_id, void *data) {
+  hdht_connect_t *c = data;
+  c->relay = NULL;
+  if (status == 0 && hdht_relay_connect(r, c->stream, remote_id) == 0) {
+    finish(c, 0);
+    return;
+  }
+  if (status == 0) hdht_relay_cancel(r);
+  finish(c, HDHT_CONNECT_ERELAY);
+}
+
+// The server's relay wins, as in connect.js; then we are not the initiator.
+static void
+start_relay (hdht_connect_t *c) {
+  bool theirs = c->payload.has_relay_through;
+  const uint8_t *key = theirs ? c->payload.relay_through_public_key : c->dht->relay;
+  const uint8_t *token = theirs ? c->payload.relay_through_token : c->relay_token;
+  c->state = C_RELAYING;
+  if (hdht_relay_pair(c->dht, key, token, !theirs, c->stream->local_id, on_relay_paired, c, &c->relay) != 0) finish(c, HDHT_CONNECT_ERELAY);
+}
+
 // connect.js holepunch(): choose how to reach the server.
 static void
 choose_path (hdht_connect_t *c) {
@@ -443,6 +478,12 @@ choose_path (hdht_connect_t *c) {
   if (!c->relayed) {
     // the node we handshaked with is the server itself
     connect_stream(c, &c->dht->socket, &c->relay_addr);
+    return;
+  }
+
+  // a relay was asked for: no direct path is tried alongside it
+  if (!c->no_relay && (c->use_relay || c->payload.has_relay_through)) {
+    start_relay(c);
     return;
   }
 
@@ -585,7 +626,7 @@ on_find_peer_done (hdht_query_t *q, int status) {
 }
 
 int
-hdht_connect (hdht_t *dht, hdht_stream_t *stream, const uint8_t remote_public_key[32], hdht_stream_open_cb on_open, hdht_stream_data_cb on_data, hdht_stream_close_cb on_close, void *data) {
+hdht__connect (hdht_t *dht, hdht_stream_t *stream, const uint8_t remote_public_key[32], hdht_stream_open_cb on_open, hdht_stream_data_cb on_data, hdht_stream_close_cb on_close, void *data, bool no_relay) {
   int err = hdht_stream_init(dht, stream, true);
   if (err) return err;
   stream->on_open = on_open;
@@ -602,6 +643,8 @@ hdht_connect (hdht_t *dht, hdht_stream_t *stream, const uint8_t remote_public_ke
   c->dht = dht;
   c->stream = stream;
   c->state = C_FINDING;
+  c->no_relay = no_relay;
+  c->use_relay = dht->has_relay && !no_relay;
   memcpy(c->remote_public_key, remote_public_key, 32);
   hdht_hash(c->target, remote_public_key, 32);
   stream->owner = c;
@@ -617,9 +660,17 @@ hdht_connect (hdht_t *dht, hdht_stream_t *stream, const uint8_t remote_public_ke
   hdht_noise_payload_t payload = {0};
   payload.version = 1;
   payload.firewall = HDHT_FIREWALL_UNKNOWN;
-  for (int i = 0; i < dht->local_addresses_len && i < HDHT_MAX_ADDRESSES; i++) {
-    payload.addresses4[payload.addresses4_len] = dht->local_addresses[i];
-    payload.addresses4[payload.addresses4_len++].port = dht->socket.local_port;
+  if (c->use_relay) {
+    // through our relay only: no LAN addresses, so the server tries no shortcut
+    payload.has_relay_through = true;
+    memcpy(payload.relay_through_public_key, dht->relay, 32);
+    randombytes_buf(c->relay_token, 32);
+    memcpy(payload.relay_through_token, c->relay_token, 32);
+  } else {
+    for (int i = 0; i < dht->local_addresses_len && i < HDHT_MAX_ADDRESSES; i++) {
+      payload.addresses4[payload.addresses4_len] = dht->local_addresses[i];
+      payload.addresses4[payload.addresses4_len++].port = dht->socket.local_port;
+    }
   }
   payload.has_udx = true;
   payload.udx_id = stream->local_id;
@@ -638,4 +689,9 @@ hdht_connect (hdht_t *dht, hdht_stream_t *stream, const uint8_t remote_public_ke
   c->query = hdht_query(dht, c->target, false, HDHT_CMD_FIND_PEER, NULL, 0, NULL, 0, on_find_peer_reply, on_find_peer_done, c);
   if (c->query == NULL) finish(c, HDHT_CONNECT_ENOMEM);
   return 0;
+}
+
+int
+hdht_connect (hdht_t *dht, hdht_stream_t *stream, const uint8_t remote_public_key[32], hdht_stream_open_cb on_open, hdht_stream_data_cb on_data, hdht_stream_close_cb on_close, void *data) {
+  return hdht__connect(dht, stream, remote_public_key, on_open, on_data, on_close, data, false);
 }

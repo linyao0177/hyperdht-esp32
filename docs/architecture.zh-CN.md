@@ -66,7 +66,7 @@ hyperdht-esp32 让一块 ESP32-C3 模组成为 Holepunch 网络中的一个节�
 | 层 | Holepunch（JS） | 模组上 |
 |---|---|---|
 | 应用、存储 | Pear、Hypercore、Autobase | 不在设备上实现；对端可以运行 |
-| 按 topic 发现 | Hyperswarm | 查找：设备能找到在某个 topic 下宣告的对端（`hdht_lookup`）。设备自己不在 topic 下宣告，对端按公钥直连设备 |
+| 按 topic 发现 | Hyperswarm | `hdht_lookup` / `hdht_announce`：设备能找到在某个 topic 下宣告的对端，也能在 topic 下宣告自己 |
 | 点对点连接 | hyperdht | `components/hdht`（C） |
 | 记录 | hyperdht `mutablePut` / `mutableGet` | `hdht_mutable_put` / `hdht_mutable_get` |
 | DHT RPC | dht-rpc | `components/hdht`（C） |
@@ -86,8 +86,8 @@ hyperdht-esp32 让一块 ESP32-C3 模组成为 Holepunch 网络中的一个节�
 | 记录 | `hdht_mutable_put / get` | 最大 1000 字节的签名值，存在离该公钥最近的约 20 个 DHT 节点上，任何人都能读取并验证 | 已完成 |
 | 本地通道 | `components/hdht_ble`、`secret_stream.h` | 同样的 SecretStream 跑在 BLE GATT（或任意字节流）上，使用同一个身份 | 已完成 |
 | topic 查找 | `hdht_lookup` | 找到在某个 topic 下宣告的对端（如 Hyperswarm 服务端）；回复只是线索，连接时才认证 | 已完成 |
-| topic 宣告 | Hyperswarm | 让别人按主题而不是按公钥找到自己 | 未实现 |
-| 中继兜底 | blind-relay | 无法打洞时仍能连接 | 未实现 |
+| topic 宣告 | `hdht_announce` / `hdht_unannounce` | 让别人按主题而不是按公钥找到自己 | 已完成 |
+| 中继 | `hdht_set_relay`；对端的 `relayThrough` | 无法打洞时（如设备在随机型 NAT 后面）经 blind-relay 节点连接 | 已完成；保持走中继，不会升级为直连 |
 
 ## 身份
 
@@ -254,9 +254,8 @@ DHT 不负责准入。任何密钥都能加入网络、宣告自己、发布记�
 
 | 缺口 | 影响 | 方向 |
 |---|---|---|
-| 没有中继兜底 | 无法打洞的组合连不上 | 实现 blind-relay（`relayThrough`） |
-| 设备侧是随机 NAT | 打洞失败；hyperdht 用 256 个 socket 的做法放不进 C3 | 由中继兜底覆盖 |
-| 设备不能在 topic 下宣告 | 对端必须事先知道设备公钥（设备可以查找 topic） | 按 hyperdht 的 announcer 实现主题哈希宣告 |
+| 需要有人运行中继节点 | 随机型 NAT 后面的设备需要一个有公网地址的 blind-relay 节点，目前还没有公共服务 | 运行中继节点，并让设备按 topic 找到它们 |
+| 中继连接不会升级 | 即使后来能直连，流量仍走中继 | 像 hyperdht 那样，打洞成功后升级为直连 |
 | 没有准入 | 任何密钥都能自称是设备 | 在 DID 记录里放制造商凭证，吊销列表放在区块链或只追加日志上 |
 | 不支持密钥轮换 | 换密钥就换了 DID | 签名的“迁移到”记录，或在 DID 记录里加入 controller 密钥 |
 | 不能列出设备 | DHT 只能按公钥查 | 在记录之上建索引，例如由发行方写入的 Hypercore/Hyperbee 日志 |

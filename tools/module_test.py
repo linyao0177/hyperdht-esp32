@@ -28,19 +28,19 @@ def check(name, ok, detail=''):
     print(f"{'PASS' if ok else 'FAIL'} {name}{'  ' + detail if detail else ''}")
 
 
-def peer(*args):
-    """Starts module-peer.js; returns the process."""
-    return subprocess.Popen(['node', 'module-peer.js', *args], cwd=HOST, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+def peer(*args, script='module-peer.js'):
+    """Starts a Node.js test peer; returns the process."""
+    return subprocess.Popen(['node', script, *args], cwd=HOST, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
 
-def peer_line(p, prefix, timeout=60):
+def peer_line(p, prefix, timeout=60, tag='PEER|'):
     deadline = time.time() + timeout
     while time.time() < deadline:
         line = p.stdout.readline()
         if not line:
             break
-        if line.startswith('PEER|' + prefix):
-            return line.strip()[5:]
+        if line.startswith(tag + prefix):
+            return line.strip()[len(tag):]
     return None
 
 
@@ -79,7 +79,7 @@ def main(port):
     # basics
     check('AT', m.command('AT') == [])
     info = m.command('AT+INFO')[0]
-    check('AT+INFO', info.startswith('+INFO:hdht-module/0.1,' + did + ',1,1,0,0,'), 'free heap ' + info.split(',')[-1])
+    check('AT+INFO', info.startswith('+INFO:hdht-module/') and (',' + did + ',1,1,0,0,') in info, info.split(',')[0][6:] + ', free heap ' + info.split(',')[-1])
     check('AT+ID?', m.command('AT+ID?') == ['+ID:' + did])
     wifi = m.command('AT+WIFI?')[0].split(',')
     check('AT+WIFI?', wifi[1] == '1', 'ssid hidden, ip ' + wifi[2])
@@ -180,6 +180,55 @@ def main(port):
     dialer.kill()
     m.command('AT+ALLOW=')
     check('AT+ALLOW= clears', m.command('AT+ALLOW?') == [])
+
+    # blind relay: every connection through a relay node, both directions
+    ip = m.command('AT+WIFI?')[0].split(',')[2]
+    relay = peer('public', 'relay', script='relay-test.js')
+    relay_did = 'did:mw:' + peer_line(relay, '', tag='RELAY|')
+    m.command('AT+RELAY=' + relay_did)
+    check('AT+RELAY?', m.command('AT+RELAY?') == ['+RELAY:' + relay_did])
+    js = peer('public', 'server', script='relay-test.js')
+    js_did = 'did:mw:' + peer_line(js, '', tag='SERVER|')
+    link, conn, took, retries = connect(m, js_did)
+    over = peer_line(js, 'connection', tag='SERVER|')
+    check('outbound through the relay', over is not None and ip not in over, f'{took:.1f} s, {retries} retries; server sees {over.split(" over ")[1] if over else None}')
+    m.command(f'AT+SENDT={link},via the relay')
+    d = m.wait_event(f'+DATA:{link},', timeout=30)
+    check('data through the relay', bytes.fromhex(d.split(',')[2]) == b'via the relay')
+    m.command(f'AT+CLOSE={link}')
+    m.wait_event(f'+CLOSED:{link}', timeout=15)
+    js.kill()
+    client = peer('public', 'client', did[7:], script='relay-test.js')
+    conn = m.wait_event('+CONN', timeout=90)
+    link = conn.split(',')[0].split(':')[1]
+    d = m.wait_event(f'+DATA:{link},', timeout=30)
+    m.command(f'AT+SEND={link},{d.split(",")[2]}')  # echo it back
+    opened = peer_line(client, 'open', tag='CLIENT|')
+    echo = peer_line(client, 'echo', tag='CLIENT|')
+    check('inbound through the relay', opened is not None and ip not in opened and echo == 'echo hello through the relay', f'client sees {opened.split(" over ")[1] if opened else None}')
+    m.wait_event(f'+CLOSED:{link}', timeout=30)
+    m.command('AT+RELAY=')
+    check('AT+RELAY= clears', m.command('AT+RELAY?') == [])
+    relay.kill()
+
+    # announce under a topic: Node.js finds the module by topic, then by key
+    topic = m.command('AT+HASH=uart-module-announce')[0][6:]
+    t = time.time()
+    m.command('AT+ANNOUNCE=' + topic)
+    ann = m.wait_event('+ANNOUNCE', timeout=60)
+    check('AT+ANNOUNCE', ann.split(',')[1] == '0' and int(ann.split(',')[2]) > 0, f'{ann.split(",", 1)[1]} in {time.time() - t:.1f} s')
+    check('AT+ANNOUNCE?', m.command('AT+ANNOUNCE?') == ['+TOPIC:' + topic])
+    def listed():
+        found = peer_line(peer('lookup', topic), 'found') or ''
+        counts = dict(x.split('=') for x in found[6:].split(',') if '=' in x)
+        return int(counts.get(did, 0))
+    before = listed()
+    check('Node.js lookup finds the module', before > 0, f'listed by {before} nodes')
+    m.command('AT+ANNOUNCE=')
+    un = m.wait_event('+UNANNOUNCE', timeout=90)
+    after = listed()
+    # unannounce is best effort, as in hyperdht: a few copies can stay until they expire (20 min)
+    check('AT+ANNOUNCE= unannounces', un.split(',')[1] == '0' and after <= max(2, before // 4), f'{un.split(",", 1)[1]}; listed by {before} -> {after} nodes')
 
     m.command('AT+LISTEN=0')
     check('AT+LISTEN=0', m.wait_event('+LISTENING', timeout=30) == '+LISTENING:CLOSED')

@@ -17,9 +17,10 @@ The same sources build in two ways:
 | `hdht_connect`: FIND_PEER, relayed handshake, direct/OPEN, LAN shortcut, holepunch | Done |
 | `hdht_listen`: announce to the 3 closest nodes, relay keepalive pings every 3 s, re-announce every ~5 min, relayed handshakes, holepunch, unannounce on close | Done |
 | Mutable records (`hdht_mutable_put` / `hdht_mutable_get`): signed values up to 1000 bytes stored under a public key | Done; interoperates with hyperdht's `mutablePut` / `mutableGet` |
-| Topic lookup (`hdht_lookup`): the public keys announced under a topic | Done; finds peers announced by hyperdht's `announce` and Hyperswarm servers |
-| Holepunching | Consistent ↔ consistent NATs, and local consistent ↔ remote random (random-port probing). A **random NAT on the device's side** is not supported, because hyperdht opens up to 256 sockets for that |
-| Not implemented | blind-relay fallback (`relayThrough`), immutable put/get, announcing under a topic from the device, reusable sockets, IPv6 |
+| Topics (`hdht_lookup`, `hdht_announce`, `hdht_unannounce`): find the keys announced under a topic, and announce our own | Done; interoperates with hyperdht's `lookup` / `announce` and Hyperswarm |
+| Holepunching | Consistent ↔ consistent NATs, and local consistent ↔ remote random (random-port probing). A **random NAT on the device's side** cannot be holepunched, because hyperdht opens up to 256 sockets for that: use a relay |
+| Blind relay (`hdht_set_relay`, and the peer's `relayThrough`) | Done, as client and server, with hyperdht's `relayThrough` and blind-relay servers. Relayed connections stay relayed: there is no upgrade to a direct path. The relay node must be reachable on the main socket |
+| Not implemented | immutable put/get, upgrading a relayed connection to direct, reusable sockets, IPv6 |
 
 ## API
 
@@ -53,8 +54,13 @@ hdht_stream_destroy(&stream, 0);             // immediate close
 hdht_mutable_put(&dht, public_key, secret_key, seq, value, len, on_put, user_data);
 hdht_mutable_get(&dht, public_key, min_seq, on_get, user_data);
 
-// topic lookup: who announced under a topic (for example a Hyperswarm topic)
+// topics: who announced under a topic (for example a Hyperswarm topic), and
+// announcing ourselves (again about every 10 min; nodes keep it 20 min)
 hdht_lookup(&dht, topic, on_peers, user_data);
+hdht_announce(&dht, topic, public_key, secret_key, on_announced, user_data);
+
+// blind relay: from now on connect and accept through this relay node
+hdht_set_relay(&dht, relay_public_key);
 // on_put(dht, status, stored_nodes, data); on_get(dht, status, seq, value, len, data)
 
 hdht_server_close(&server, on_closed);
@@ -64,6 +70,8 @@ hdht_destroy(&dht, on_destroyed);
 - **Keys**: Ed25519 key pairs (`hdht_keypair(pk, sk, seed)`). The public key is the device's address. Generate a random seed once and keep it, for example in NVS.
 - **Peers**: `stream->remote_public_key` is authenticated by the Noise handshake. Check it against an allow list if only known peers may connect.
 - **Mutable records**: stored on the ~20 nodes closest to `BLAKE2b(public key)`, which keep them for up to 48 hours, so republish periodically. A higher `seq` replaces a lower one; putting the same `seq` with a different value fails with `HDHT_MUTABLE_ESEQ_REUSED`, and a lower one with `HDHT_MUTABLE_ESEQ_TOO_LOW`. `get` returns only values whose signature matches the key, and the highest `seq` it finds. Anyone holding a signed record can republish it unchanged.
+- **Relay**: with `hdht_set_relay`, every connect and every accepted connection pairs at that relay node instead of holepunching. That is the way through a random (symmetric) NAT or a firewall that blocks UDP holepunching. A peer that asks for a relay (`relayThrough`) gets one either way. The relay sees only encrypted packets. A relay node is any hyperdht peer that accepts blind-relay sessions, for example `node tools/host/relay-test.js public relay`. It needs a public address, or one on the device's LAN.
+- **Announce**: a device that announces under a topic should also `hdht_listen` on the same key, so peers that find it can connect. Unannounce is best effort, as in hyperdht. On the public DHT it removed 17–19 of 19 copies at once; the rest expire after 20 minutes.
 - **Topic lookup**: returns up to `HDHT_LOOKUP_MAX_PEERS` (16) distinct public keys from the nodes closest to the topic. The replies are not signed, so treat each key as a hint: connecting to it is what authenticates it, and anything the peer claims should be checked, for example against its mutable record.
 - **Errors**: connection failures are reported through `on_close` with a `HDHT_CONNECT_E*` or `HDHT_STREAM_E*` code.
 
@@ -128,7 +136,8 @@ Then:
 - `components/hdht/build/test_connect 127.0.0.1:49800 <key>` connects from C to the JS server over the holepunch path.
 - `components/hdht/build/test_server 127.0.0.1:49800` announces a C server; then `node tools/host/connect-board.js 127.0.0.1:49800 5 0x22` connects to it from JS.
 - `components/hdht/build/test_mutable 127.0.0.1:49800 put <hex seed> <seq> <value>` stores a mutable record and `test_mutable 127.0.0.1:49800 get <hex public key>` reads one; either side can be hyperdht's `mutablePut` / `mutableGet`. Both also work with `public`.
-- `components/hdht/build/test_lookup <host:port | public> <hex topic>` lists the keys announced under a topic, for example by a Hyperswarm server that joined it.
+- `components/hdht/build/test_lookup <host:port | public> <hex topic>` lists the keys announced under a topic, for example by a Hyperswarm server that joined it. With `announce <hex seed>` or `unannounce <hex seed>`, it first announces or unannounces that key.
+- Relay: `node tools/host/relay-test.js 127.0.0.1:49800 relay` starts a blind-relay node and prints its key. Then set `HDHT_RELAY=<key>` for `test_connect` or `test_server` to go through it. `relay-test.js ... server [relay key]` and `client <key> [relay key]` are the JS ends; both print the address their stream runs over, which is the relay's.
 - `components/hdht/build/test_ss 7777 xx` is a SecretStream responder over TCP; `node tools/host/ss-client.js 7777 xx` runs the official module against it.
 
 ## Source map
