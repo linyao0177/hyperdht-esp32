@@ -243,10 +243,15 @@ def main(port):
         peer_line(p, 'record published', tag=f'RELAY[{name}]|')
         return p, line.split()[1]
     relay_a, a_did = relay_node('relay-a')
+    # public relays are announced on the same topic and picked at random, so
+    # look again until the module lands on A, the one this test can kill
     t = time.time()
-    m.command('AT+RELAY=AUTO')
-    found = m.wait_event('+RELAYFOUND', timeout=90)
-    check('AT+RELAY=AUTO finds the relay node', found == '+RELAYFOUND:' + a_did, f'{found[:30]}... in {time.time() - t:.1f} s')
+    for tries in range(1, 9):
+        m.command('AT+RELAY=AUTO')
+        found = m.wait_event('+RELAYFOUND', timeout=90)
+        if found == '+RELAYFOUND:' + a_did:
+            break
+    check('AT+RELAY=AUTO finds the relay node', found == '+RELAYFOUND:' + a_did, f'{found[:30]}... in {time.time() - t:.1f} s, {tries} tries')
     check('AT+RELAY? in auto mode', m.command('AT+RELAY?') == ['+RELAY:AUTO,' + a_did])
     js = peer('public', 'server', script='relay-test.js')
     js_did = 'did:mw:' + peer_line(js, '', tag='SERVER|')
@@ -257,13 +262,21 @@ def main(port):
     m.wait_event(f'+CLOSED:{link}', timeout=15)
 
     # relay A dies without unannouncing; B is up: the next relayed connect
-    # fails with -107 and the module moves to B
+    # fails with -107 and the module moves to B, or to a public relay
     relay_a.kill()
     relay_b, b_did = relay_node('relay-b')
-    link = m.command('AT+CONNECT=' + js_did)[0].split(':')[1]
-    ev = m.wait_event('+C', timeout=90, match=lambda x: x.startswith(f'+CONN:{link},') or x.startswith(f'+CLOSED:{link},'))
-    found = m.wait_event('+RELAYFOUND', timeout=90)
-    check('a dead relay is replaced', ev == f'+CLOSED:{link},-107' and found == '+RELAYFOUND:' + b_did, f'{ev}, then {found[:30]}...')
+    # only -107 moves the module; a connect can also fail first with -100,
+    # as first connects on the public network sometimes do
+    evs = []
+    for _ in range(3):
+        link = m.command('AT+CONNECT=' + js_did)[0].split(':')[1]
+        ev = m.wait_event('+C', timeout=90, match=lambda x: x.startswith(f'+CONN:{link},') or x.startswith(f'+CLOSED:{link},'))
+        evs.append(ev)
+        if ev == f'+CLOSED:{link},-107':
+            break
+    found = m.wait_event('+RELAYFOUND', timeout=90) if ev.endswith(',-107') else '(no -107)'
+    replaced = found.startswith('+RELAYFOUND:did:mw:') and found != '+RELAYFOUND:' + a_did
+    check('a dead relay is replaced', replaced, f'{", ".join(evs)}, then {found[:30]}...' + ('' if found == '+RELAYFOUND:' + b_did else ' (a public relay)'))
     link, conn, took, retries = connect(m, js_did)
     over = peer_line(js, 'connection', tag='SERVER|')
     check('outbound through the new relay', over is not None and ip not in over, f'{took:.1f} s, {retries} retries')

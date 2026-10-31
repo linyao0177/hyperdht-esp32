@@ -249,7 +249,7 @@ Known limits today, roughly in order of impact for products:
 
 | Gap | Effect | Direction |
 |---|---|---|
-| Relays must be run | A device behind a random NAT needs a blind-relay node with a public address. Devices find relay nodes by topic and move off dead ones ([relay-node.md](relay-node.md)), but no public node is kept running yet | Operators run `relay-node.js` from [`deploy/`](../deploy) on public servers |
+| Relays must be run | A device behind a random NAT needs a blind-relay node with a public address. Devices find relay nodes by topic and move off dead ones ([relay-node.md](relay-node.md)), and one public node runs on a cloud VM, but more operators are needed | Operators run `relay-node.js` from [`deploy/`](../deploy) on public servers |
 | Relayed connections stay relayed | Traffic keeps going through the relay even when a direct path would work | Upgrade to direct after a later holepunch, as hyperdht does |
 | Admission is checked in JavaScript only | Manufacturer credentials and revocation work ([credentials.md](credentials.md)), but devices cannot yet check each other's | The same check in C, and revocation lists in an append-only log for large fleets |
 | Key protection not run on a chip | Secure boot, flash and NVS encryption are configured and build ([key-protection.md](key-protection.md)) but burn eFuses, so they have not been tried | Run on spare boards, including signed OTA |

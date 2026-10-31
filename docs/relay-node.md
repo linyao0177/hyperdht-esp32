@@ -79,12 +79,13 @@ LIST|did:mw:2012cb90ca60e8e5... no relay record FAILED timeout 15004 ms
 | Desktop, local testnet | `test_connect` with `HDHT_RELAY=find` found the relay node and connected through it in 5 of 5 runs. The topic also listed a key with no node behind it and a node that accepts connections but never answers. The device skipped both: the dead key at once, the silent node after 8 s |
 | ESP32-C3, public HyperDHT | `AT+RELAY=AUTO` found a relay node on the module's LAN in 8.8 s, and links ran through it. Killing that node without unannouncing made the next connect fail with -107. The module then found a second node by itself, and the next connect went through it (`tools/module_test.py`, 54 of 54) |
 | `--list` | Showed the working node as `ok direct=true` and both broken ones as `FAILED` |
+| ESP32-C3, relay on a cloud VM (2026-10-31) | A node on a Google Cloud e2-small in Taiwan found itself reachable and announced without `--force`. `AT+RELAY=AUTO` on the board found it in 4.5 s. Two of three connects from the board to a peer on the same LAN ran through it (the peer saw the VM's address); the first failed with -101, as first connects to a fresh server sometimes do. In a `tools/module_test.py` run (54 of 54), the module moved to this node by itself when the test's own relay node died |
 
-Not tested: a relay node on a public address, and a device behind a real random NAT or 4G. All runs had the relay on the device's LAN with `--force`.
+Not tested: a device behind a real random NAT or 4G. In every run, the two peers could also have reached each other directly.
 
 ## What is not done yet
 
-- **Public nodes running for good.** The tools and deployment files are here, but no relay is kept up on a public address yet.
+- **More public nodes.** One relay node runs on a cloud VM, set up with `deploy/systemd`. Devices need more than one operator's nodes before relaying stops depending on a single machine.
 - **Choosing by distance or load.** Devices pick a working relay at random. They do not measure latency or read the node's load.
 - **Moving to a direct path.** A relayed connection stays relayed, as everywhere in hdht.
 - **Paying relays.** Unlike anchor nodes, relay nodes earn nothing.

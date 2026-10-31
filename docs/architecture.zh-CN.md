@@ -254,7 +254,7 @@ DHT 不负责准入。任何密钥都能加入网络、宣告自己、发布记�
 
 | 缺口 | 影响 | 方向 |
 |---|---|---|
-| 需要有人运行中继节点 | 随机型 NAT 后面的设备需要一个有公网地址的 blind-relay 节点。设备已能按 topic 找到中继节点并避开失效的节点（[relay-node.md](relay-node.md)），但还没有长期运行的公共节点 | 运营者用 [`deploy/`](../deploy) 在公网服务器上运行 `relay-node.js` |
+| 需要有人运行中继节点 | 随机型 NAT 后面的设备需要一个有公网地址的 blind-relay 节点。设备已能按 topic 找到中继节点并避开失效的节点（[relay-node.md](relay-node.md)），目前有一个公共节点跑在云服务器上，但还需要更多运营者 | 运营者用 [`deploy/`](../deploy) 在公网服务器上运行 `relay-node.js` |
 | 中继连接不会升级 | 即使后来能直连，流量仍走中继 | 像 hyperdht 那样，打洞成功后升级为直连 |
 | 准入只能在 JavaScript 里检查 | 制造商凭证和吊销已经可用（[credentials.md](credentials.md)），但设备之间还不能互相检查 | 在 C 里实现同样的检查；大规模设备的吊销列表放进只追加日志 |
 | 密钥保护没在芯片上跑过 | 安全启动、flash 加密和 NVS 加密已配置并能编译（[key-protection.md](key-protection.md)），但会烧录 eFuse，所以还没试 | 在备用板上跑一遍，包括签名的 OTA 升级 |
