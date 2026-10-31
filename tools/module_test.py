@@ -32,6 +32,10 @@ def check(name, ok, detail=''):
     print(f"{'PASS' if ok else 'FAIL'} {name}{'  ' + detail if detail else ''}")
 
 
+def skip(name, why):
+    print(f'SKIP {name}  {why}')
+
+
 def peer(*args, script='module-peer.js'):
     """Starts a Node.js test peer; returns the process."""
     p = subprocess.Popen(['node', script, *args], cwd=HOST, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -63,6 +67,15 @@ def connect(m, did, tries=2):
     raise ModuleError('connect failed')
 
 
+def path(m, link):
+    """RELAY or DIRECT, from AT+LINKS?"""
+    for line in m.command('AT+LINKS?'):
+        f = line[6:].split(',')
+        if f[0] == str(link):
+            return f[4]
+    return None
+
+
 def errors_with(m, cmd):
     try:
         m.command(cmd)
@@ -82,6 +95,7 @@ def main(port):
     check('boot, WiFi and DHT', ready.split(',')[1] == '0', f'ready in {time.time() - t0:.1f} s, {net.split(",")[0]}')
     key = bytes.fromhex(did[7:])
     m.command('AT+RELAY=')  # a run that died midway may have left one set
+    m.command('AT+RELAYONLY=0')
 
     # basics
     check('AT', m.command('AT') == [])
@@ -160,7 +174,7 @@ def main(port):
     d = m.wait_event(f'+DATA:{link},', timeout=30)
     check('AT+SENDT with commas', bytes.fromhex(d.split(',')[2]) == b'text with, commas')
     links = m.command('AT+LINKS?')
-    check('AT+LINKS?', links == [f'+LINK:{link},{server_did},OUT,1'])
+    check('AT+LINKS?', links == [f'+LINK:{link},{server_did},OUT,1,DIRECT'])
     info = m.command('AT+INFO')[0].split(',')
     check('AT+INFO with a link open', info[-2] == '1', 'free heap ' + info[-1])
     m.command(f'AT+CLOSE={link}')
@@ -204,17 +218,20 @@ def main(port):
     m.command('AT+ALLOW=')
     check('AT+ALLOW= clears', m.command('AT+ALLOW?') == [])
 
-    # blind relay: every connection through a relay node, both directions
+    # blind relay: every connection through a relay node, both directions;
+    # relay-only, or holepunching alongside could move the links off it
     ip = m.command('AT+WIFI?')[0].split(',')[2]
     relay = peer('public', 'relay', script='relay-test.js')
     relay_did = 'did:mw:' + peer_line(relay, '', tag='RELAY|')
     m.command('AT+RELAY=' + relay_did)
     check('AT+RELAY?', m.command('AT+RELAY?') == ['+RELAY:' + relay_did])
+    m.command('AT+RELAYONLY=1')
+    check('AT+RELAYONLY?', m.command('AT+RELAYONLY?') == ['+RELAYONLY:1'])
     js = peer('public', 'server', script='relay-test.js')
     js_did = 'did:mw:' + peer_line(js, '', tag='SERVER|')
     link, conn, took, retries = connect(m, js_did)
     over = peer_line(js, 'connection', tag='SERVER|')
-    check('outbound through the relay', over is not None and ip not in over, f'{took:.1f} s, {retries} retries; server sees {over.split(" over ")[1] if over else None}')
+    check('outbound through the relay', over is not None and ip not in over and path(m, link) == 'RELAY', f'{took:.1f} s, {retries} retries; server sees {over.split(" over ")[1] if over else None}')
     m.command(f'AT+SENDT={link},via the relay')
     d = m.wait_event(f'+DATA:{link},', timeout=30)
     check('data through the relay', bytes.fromhex(d.split(',')[2]) == b'via the relay')
@@ -230,6 +247,36 @@ def main(port):
     echo = peer_line(client, 'echo', tag='CLIENT|')
     check('inbound through the relay', opened is not None and ip not in opened and echo == 'echo hello through the relay', f'client sees {opened.split(" over ")[1] if opened else None}')
     m.wait_event(f'+CLOSED:{link}', timeout=30)
+
+    # holepunching alongside the relay: a link that opens through the relay
+    # moves to a direct path once holepunching gets through (+DIRECT). If
+    # holepunching wins the race, the link opens directly: try again. On a LAN
+    # whose router holepunches quickly it may win every time.
+    m.command('AT+RELAYONLY=0')
+    js = peer('public', 'server', script='relay-test.js')
+    js_did = 'did:mw:' + peer_line(js, '', tag='SERVER|')
+    for tries in range(1, 6):
+        link, conn, took, retries = connect(m, js_did)
+        if path(m, link) == 'RELAY' or tries == 5:
+            break
+        m.command(f'AT+CLOSE={link}')
+        m.wait_event(f'+CLOSED:{link}', timeout=15)
+    t = time.time()
+    if path(m, link) != 'RELAY':
+        skip('a relayed link moves to a direct path', f'holepunching beat the relay {tries} times')
+    else:
+        try:
+            direct = m.wait_event(f'+DIRECT:{link}', timeout=45)
+        except ModuleError:
+            direct = None
+        moved = peer_line(js, 'moved', timeout=5, tag='SERVER|') if direct else None
+        check('a relayed link moves to a direct path', direct is not None and moved is not None and path(m, link) == 'DIRECT', f'{time.time() - t:.1f} s after opening, server {moved}, {tries} tries')
+    m.command(f'AT+SENDT={link},after moving')
+    d = m.wait_event(f'+DATA:{link},', timeout=30)
+    check('data on the link afterwards', bytes.fromhex(d.split(',')[2]) == b'after moving', path(m, link))
+    m.command(f'AT+CLOSE={link}')
+    m.wait_event(f'+CLOSED:{link}', timeout=15)
+    js.kill()
     m.command('AT+RELAY=')
     check('AT+RELAY= clears', m.command('AT+RELAY?') == [])
     relay.kill()
@@ -243,6 +290,8 @@ def main(port):
         peer_line(p, 'record published', tag=f'RELAY[{name}]|')
         return p, line.split()[1]
     relay_a, a_did = relay_node('relay-a')
+    # relay-only: with holepunching alongside, a dead relay may go unnoticed
+    m.command('AT+RELAYONLY=1')
     # public relays are announced on the same topic and picked at random, so
     # look again until the module lands on A, the one this test can kill
     t = time.time()
@@ -257,7 +306,7 @@ def main(port):
     js_did = 'did:mw:' + peer_line(js, '', tag='SERVER|')
     link, conn, took, retries = connect(m, js_did)
     over = peer_line(js, 'connection', tag='SERVER|')
-    check('outbound through the found relay', over is not None and ip not in over, f'{took:.1f} s, {retries} retries')
+    check('outbound through the found relay', over is not None and ip not in over and path(m, link) == 'RELAY', f'{took:.1f} s, {retries} retries')
     m.command(f'AT+CLOSE={link}')
     m.wait_event(f'+CLOSED:{link}', timeout=15)
 
@@ -279,11 +328,12 @@ def main(port):
     check('a dead relay is replaced', replaced, f'{", ".join(evs)}, then {found[:30]}...' + ('' if found == '+RELAYFOUND:' + b_did else ' (a public relay)'))
     link, conn, took, retries = connect(m, js_did)
     over = peer_line(js, 'connection', tag='SERVER|')
-    check('outbound through the new relay', over is not None and ip not in over, f'{took:.1f} s, {retries} retries')
+    check('outbound through the new relay', over is not None and ip not in over and path(m, link) == 'RELAY', f'{took:.1f} s, {retries} retries')
     m.command(f'AT+CLOSE={link}')
     m.wait_event(f'+CLOSED:{link}', timeout=15)
     m.command('AT+RELAY=')
     check('AT+RELAY= leaves auto mode', m.command('AT+RELAY?') == [])
+    m.command('AT+RELAYONLY=0')
     js.kill()
     # stop both cleanly so neither stays announced on the public DHT
     relay_a, _ = relay_node('relay-a')

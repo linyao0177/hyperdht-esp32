@@ -87,7 +87,7 @@ These are the building blocks a product gets. Each is usable on its own.
 | Local channel | `components/hdht_ble`, `secret_stream.h` | The same SecretStream over BLE GATT (or any byte stream), keyed by the same identity | Done |
 | Topic lookup | `hdht_lookup` | Finding peers announced under a topic, such as Hyperswarm servers; the replies are hints, authenticated by connecting | Done |
 | Topic announce | `hdht_announce` / `hdht_unannounce` | Being found by topic instead of by key | Done |
-| Relay | `hdht_set_relay`, `hdht_relay_find`; the peer's `relayThrough` | Connections that cannot be holepunched, such as from behind a random NAT, through a blind-relay node, found by topic or given by key | Done; stays relayed, with no direct upgrade |
+| Relay | `hdht_set_relay`, `hdht_relay_find`; the peer's `relayThrough` | Connections that cannot be holepunched, such as from behind a random NAT, through a blind-relay node, found by topic or given by key | Done; moves to a direct path when holepunching gets through |
 
 ## Identity
 
@@ -250,7 +250,7 @@ Known limits today, roughly in order of impact for products:
 | Gap | Effect | Direction |
 |---|---|---|
 | Relays must be run | A device behind a random NAT needs a blind-relay node with a public address. Devices find relay nodes by topic and move off dead ones ([relay-node.md](relay-node.md)), and one public node runs on a cloud VM, but more operators are needed | Operators run `relay-node.js` from [`deploy/`](../deploy) on public servers |
-| Relayed connections stay relayed | Traffic keeps going through the relay even when a direct path would work | Upgrade to direct after a later holepunch, as hyperdht does |
+| Relay to direct by holepunching only | A relayed stream moves to a direct path when holepunching gets through, but not over the LAN shortcut, and a relayed connection to a peer with a public address stays relayed | Try the LAN and public addresses alongside the relay too |
 | Admission is checked in JavaScript only | Manufacturer credentials and revocation work ([credentials.md](credentials.md)), but devices cannot yet check each other's | The same check in C, and revocation lists in an append-only log for large fleets |
 | Key protection not run on a chip | Secure boot, flash and NVS encryption are configured and build ([key-protection.md](key-protection.md)) but burn eFuses, so they have not been tried | Run on spare boards, including signed OTA |
 | No key rotation | A new key is a new DID | A signed "moved to" record, or controller keys in the DID record |

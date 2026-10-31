@@ -2,7 +2,8 @@
 //
 //   test_server <bootstrap host:port> [seconds]
 //
-// HDHT_RELAY=<hex key> connects (or accepts) through that blind relay only.
+// HDHT_RELAY=<hex key> accepts through that blind relay, holepunching
+// alongside it; HDHT_RELAY_ONLY=1 keeps streams on the relay.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,8 +43,13 @@ on_open (hdht_stream_t *s) {
 }
 
 static void
+on_direct (hdht_stream_t *s) {
+  printf("stream direct via %s, relay closed\n", hdht_addr_str(&s->remote_addr));
+}
+
+static void
 on_data (hdht_stream_t *s, const uint8_t *data, size_t len) {
-  printf("data: %.*s\n", (int) len, (const char *) data);
+  printf("data: %.*s (via %s%s)\n", (int) len, (const char *) data, hdht_addr_str(&s->remote_addr), s->relay ? ", relayed" : "");
   echoed++;
   hdht_stream_write(s, data, len);
 }
@@ -64,6 +70,7 @@ on_connection (hdht_server_t *s, hdht_stream_t *stream) {
   stream->on_open = on_open;
   stream->on_data = on_data;
   stream->on_close = on_stream_close;
+  stream->on_direct = on_direct;
 }
 
 static void
@@ -114,7 +121,9 @@ main (int argc, char **argv) {
   if (hdht_init(&dht, uv_default_loop(), &opts) != 0) return 1;
   const char *relay = getenv("HDHT_RELAY");
   uint8_t relay_key[32];
-  if (relay && sodium_hex2bin(relay_key, 32, relay, strlen(relay), NULL, NULL, NULL) == 0) hdht_set_relay(&dht, relay_key);
+  if (relay && strlen(relay) == 64 && sodium_hex2bin(relay_key, 32, relay, 64, NULL, NULL, NULL) == 0) hdht_set_relay(&dht, relay_key);
+  hdht_set_relay_only(&dht, getenv("HDHT_RELAY_ONLY") != NULL);
+  setvbuf(stdout, NULL, _IOLBF, 0);
   add_local_addresses();
 
   uv_timer_init(uv_default_loop(), &stop_timer);

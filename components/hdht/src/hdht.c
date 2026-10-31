@@ -90,6 +90,11 @@ hdht_set_relay (hdht_t *dht, const uint8_t relay_public_key[32]) {
   if (relay_public_key) memcpy(dht->relay, relay_public_key, 32);
 }
 
+void
+hdht_set_relay_only (hdht_t *dht, bool relay_only) {
+  dht->relay_only = relay_only;
+}
+
 typedef struct {
   hdht_ready_cb cb;
 } bootstrap_req_t;

@@ -14,10 +14,13 @@
 #include "dht.h"
 
 #define HDHT_STREAM_KEEPALIVE_MS 5000
+#define HDHT_STREAM_UPGRADE_MS   1000 // relay -> direct: check this often
+#define HDHT_STREAM_UPGRADE_MAX  30   // and give up after this many checks
 
 typedef struct hdht_stream_s hdht_stream_t;
 
 typedef void (*hdht_stream_open_cb)(hdht_stream_t *stream);
+typedef void (*hdht_stream_cb)(hdht_stream_t *stream);
 typedef void (*hdht_stream_data_cb)(hdht_stream_t *stream, const uint8_t *data, size_t len);
 // Last callback; the stream memory may be released from here. error is 0 on a clean end.
 typedef void (*hdht_stream_close_cb)(hdht_stream_t *stream, int error);
@@ -76,9 +79,22 @@ struct hdht_stream_s {
   hdht_stream_data_cb on_data;
   hdht_stream_close_cb on_close;
   hdht_stream_firewall_cb on_firewall;
+  hdht_stream_cb on_direct; // optional: a relayed stream moved to a direct path
   void *data;  // user data
   void *owner; // connect/server state that created the stream
-  struct hdht_relay_s *relay; // the relay connection this stream runs through, if any
+  hdht_stream_cb on_finalize; // owner hook: the stream is closing, drop it
+
+  // the relay connection this stream runs through, if any
+  struct hdht_relay_s *relay;
+  hdht_socket_t *relay_socket;
+  hdht_addr_t relay_addr;
+
+  // moving from the relay to a direct path (hdht_stream_upgrade)
+  bool upgrading;
+  uint32_t relay_rx;    // packets that still came through the relay
+  uint64_t upgrade_rx;  // udx packets_rx at the last check
+  uint8_t upgrade_checks;
+  uv_timer_t upgrade_timer;
 
   struct {
     uint64_t bytes_in;
@@ -101,6 +117,13 @@ hdht_stream_connect (hdht_stream_t *stream, hdht_socket_t *socket, uint32_t remo
 // Encrypts and queues one message. Returns 0 or a negative error.
 int
 hdht_stream_write (hdht_stream_t *stream, const uint8_t *data, size_t len);
+
+// Moves a stream that runs through a relay to a direct path: socket (now
+// owned by the stream, also on failure), the remote's stream id and address.
+// The relay connection closes once the remote answers on the direct path
+// only (hyperdht confirmDirectUpgrade); if it never does, both stay.
+int
+hdht_stream_upgrade (hdht_stream_t *stream, hdht_socket_t *socket, uint32_t remote_id, const hdht_addr_t *addr);
 
 // Graceful end after queued writes.
 int

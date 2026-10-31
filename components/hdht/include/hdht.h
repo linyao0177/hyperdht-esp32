@@ -200,14 +200,21 @@ hdht_unannounce (hdht_t *dht, const uint8_t topic[32], const uint8_t public_key[
 // NAT, can meet at a relay node: any hyperdht peer running a blind-relay
 // server, as hyperdht's relayThrough. The relay forwards encrypted UDX packets
 // and cannot read them. A connection uses a relay when either side asks:
-// - hdht_set_relay(dht, key): our connects and our servers use this relay,
-//   without trying a direct path first;
+// - hdht_set_relay(dht, key): our connects and our servers use this relay;
 // - a peer that sets relayThrough: we pair at the relay it names.
+// Holepunching runs alongside the relay, as in hyperdht. When it gets
+// through after the relay, the stream moves to the direct path and the relay
+// connection closes once the peer has moved too (stream->on_direct reports
+// it). hdht_set_relay_only(dht, true) skips that, so peers never see our
+// address. A stream runs through a relay while stream->relay is set.
 // The relay node must be reachable on our main socket (a public address, or
 // our LAN); a relay that needs holepunching itself is refused.
 
 void
 hdht_set_relay (hdht_t *dht, const uint8_t relay_public_key[32]); // NULL: only when the peer asks
+
+void
+hdht_set_relay_only (hdht_t *dht, bool relay_only);
 
 typedef struct hdht_relay_s hdht_relay_t;
 

@@ -6,4 +6,6 @@ Two bug fixes are applied to `libudx/src/udx.c`. Both were found under memory pr
 1. A data corruption bug: an RTO rewrote the header of an MTU probe that was still queued for sending.
 2. A NULL dereference when buffering out-of-order data with the heap exhausted.
 
+One function is added: `udx_stream_retarget_unacked()` points packets still unacked on the old path at the new remote after `udx_stream_change_remote()`. hdht uses it when a stream moves off a blind relay, so packets the peer can no longer receive there are sent the direct way too. It is a feature for hdht, not a bug fix, so it is not submitted upstream.
+
 `port/` holds the ESP-IDF glue: `io_esp.c` (in place of `io_posix.c`; lwIP has no MTU discovery) and `udx_alloc.*`, which counts libudx's own heap use separately.

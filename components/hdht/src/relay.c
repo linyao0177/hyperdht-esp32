@@ -156,12 +156,13 @@ on_relay_close (hdht_stream_t *stream, int error) {
   hdht_relay_t *r = stream->data;
   if (r->cb) report(r, error ? error : HDHT_CONNECT_ERELAY, 0);
 
-  // our stream cannot work without the relay
+  // our stream cannot work without the relay, unless it already sends
+  // directly (the remote may have moved too)
   hdht_stream_t *bound = r->bound;
   r->bound = NULL;
   if (bound) {
     bound->relay = NULL;
-    hdht_stream_destroy(bound, HDHT_STREAM_ECLOSED);
+    if (!bound->upgrading) hdht_stream_destroy(bound, HDHT_STREAM_ECLOSED);
   }
 
   uv_close((uv_handle_t *) &r->timer, on_timer_close);
@@ -220,6 +221,8 @@ hdht_relay_connect (hdht_relay_t *r, hdht_stream_t *stream, uint32_t remote_id) 
   if (err) return err;
   r->bound = stream;
   stream->relay = r;
+  stream->relay_socket = r->stream.socket;
+  stream->relay_addr = r->stream.remote_addr;
   return 0;
 }
 

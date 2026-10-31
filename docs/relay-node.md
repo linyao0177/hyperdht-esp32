@@ -69,7 +69,7 @@ LIST|did:mw:2012cb90ca60e8e5... no relay record FAILED timeout 15004 ms
 ## Trust and abuse
 
 - **Privacy**: the relay sees which two keys pair, when, and how many bytes they send. It does not see content. A device that must hide who it talks to should not use a public relay.
-- **Availability**: a relay can drop traffic. Devices move to another relay when connects through it fail, and when the periodic probe fails.
+- **Availability**: a relay can drop traffic. Devices move to another relay when connects through it fail, and when the periodic probe fails. Since holepunching runs alongside the relay, a connect through a dead relay still succeeds when holepunching does, so the module notices a dead relay at the latest with its 10-minute probe.
 - **Abuse of the operator**: anyone can use a public relay's bandwidth. `--max-sessions` caps the sessions. There is no payment or rate limit per key yet.
 
 ## Results (2026-10-29)
@@ -81,11 +81,14 @@ LIST|did:mw:2012cb90ca60e8e5... no relay record FAILED timeout 15004 ms
 | `--list` | Showed the working node as `ok direct=true` and both broken ones as `FAILED` |
 | ESP32-C3, relay on a cloud VM (2026-10-31) | A node on a Google Cloud e2-small in Taiwan found itself reachable and announced without `--force`. `AT+RELAY=AUTO` on the board found it in 4.5 s. Two of three connects from the board to a peer on the same LAN ran through it (the peer saw the VM's address); the first failed with -101, as first connects to a fresh server sometimes do. In a `tools/module_test.py` run (54 of 54), the module moved to this node by itself when the test's own relay node died |
 
+| Relay to direct, desktop (2026-10-31) | On a local testnet with holepunching delayed 1.5 s so the relay won: C to C, 13 of 13 streams opened through the relay and moved to the direct path about 2.5 s later on both sides, then closed the relay connection. C client to a hyperdht server: 5 of 5 moved, and hyperdht moved its side too (`remote-changed`). With `HDHT_RELAY_ONLY` on either side, 7 of 7 stayed relayed |
+| Relay to direct, ESP32-C3 (2026-10-31) | The board and a hyperdht server on the same LAN, public DHT, relay node on this computer. Holepunching beat the relay in 9 of 9 connects, so the links opened directly. With holepunching delayed 6 s in a test build, both links opened through the relay and reported `+DIRECT` 1.0 and 3.6 s later; data then went direct and the server saw the board's public address. `tools/module_test.py` 56 of 56 (the upgrade check skips when holepunching wins every time) |
+
 Not tested: a device behind a real random NAT or 4G. In every run, the two peers could also have reached each other directly.
 
 ## What is not done yet
 
 - **More public nodes.** One relay node runs on a cloud VM, set up with `deploy/systemd`. Devices need more than one operator's nodes before relaying stops depending on a single machine.
 - **Choosing by distance or load.** Devices pick a working relay at random. They do not measure latency or read the node's load.
-- **Moving to a direct path.** A relayed connection stays relayed, as everywhere in hdht.
+- **Moving to a direct path over the LAN.** A relayed connection moves only when holepunching gets through. The LAN shortcut is not tried alongside the relay, and a connection to a peer with a public address stays relayed.
 - **Paying relays.** Unlike anchor nodes, relay nodes earn nothing.

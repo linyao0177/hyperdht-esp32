@@ -11,3 +11,10 @@ Local patches to src/udx.c (both are upstream bugs, found under memory pressure 
 2. process_data_packet slow path: handle calloc/malloc returning NULL for the
    out-of-order sack block and packet copy (dropped; the remote retransmits)
    instead of asserting / writing through NULL.
+
+3. udx_stream_retarget_unacked() (new, also declared in include/udx.h): after
+   udx_stream_change_remote(), points the packets still unacked on the old
+   path at the new remote (address, id and the id in the header). Without it,
+   retransmits keep going to the old host; when hdht moves a stream off a
+   blind relay that the remote has already left, they are never acked and the
+   stream stalls. A feature, not a bug fix, so it is not sent upstream.

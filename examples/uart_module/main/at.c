@@ -54,6 +54,7 @@ static uv_timer_t republish_timer, restart_timer, announce_timer, relay_timer;
 static bool has_relay;
 static uint8_t relay[32];
 static bool relay_auto;   // AT+RELAY=AUTO: a public relay found by topic
+static bool relay_only;   // AT+RELAYONLY=1: relayed links never move to a direct path
 static bool relay_finding;
 
 static uint8_t topics[MAX_TOPICS][32];
@@ -151,6 +152,7 @@ save_relay (void) {
   if (has_relay && !relay_auto) nvs_set_blob(nvs, "relay", relay, 32);
   else nvs_erase_key(nvs, "relay");
   nvs_set_u8(nvs, "relay_auto", relay_auto);
+  nvs_set_u8(nvs, "relay_only", relay_only);
   nvs_commit(nvs);
   nvs_close(nvs);
 }
@@ -202,6 +204,12 @@ on_link_close (hdht_stream_t *stream, int err) {
   l->s = NULL;
 }
 
+// a relayed link moved to a direct path
+static void
+on_link_direct (hdht_stream_t *stream) {
+  port_printf("+DIRECT:%d", link_index(stream->data));
+}
+
 static void
 on_link_open (hdht_stream_t *stream) {
   link_t *l = stream->data;
@@ -238,6 +246,7 @@ on_connection (hdht_server_t *srv, hdht_stream_t *stream) {
   stream->data = l;
   stream->on_data = on_link_data;
   stream->on_close = on_link_close;
+  stream->on_direct = on_link_direct;
   port_printf("+CONN:%d,%s,IN", link_index(l), d);
 }
 
@@ -631,7 +640,8 @@ cmd_links (void) {
     if (!links[i].used) continue;
     char d[72];
     did_of(links[i].key, d);
-    port_printf("+LINK:%d,%s,%s,%d", i, d, links[i].inbound ? "IN" : "OUT", links[i].open);
+    const char *path = !links[i].open ? "-" : links[i].s && links[i].s->relay ? "RELAY" : "DIRECT";
+    port_printf("+LINK:%d,%s,%s,%d,%s", i, d, links[i].inbound ? "IN" : "OUT", links[i].open, path);
   }
   ok();
 }
@@ -800,6 +810,7 @@ at_line (char *line) {
       error("connect failed to start");
       return;
     }
+    l->stream.on_direct = on_link_direct;
     port_printf("+CONNECT:%d", link_index(l));
     ok();
     return;
@@ -849,6 +860,22 @@ at_line (char *line) {
     save_relay();
     hdht_set_relay(&dht, has_relay ? relay : NULL);
     if (to_auto) find_relay(NULL); // then +RELAYFOUND
+    ok();
+    return;
+  }
+  if (strcmp(name, "AT+RELAYONLY") == 0 && (set || query)) {
+    if (query) {
+      port_printf("+RELAYONLY:%d", relay_only);
+      ok();
+      return;
+    }
+    if (strcmp(args, "0") != 0 && strcmp(args, "1") != 0) {
+      error("0 or 1");
+      return;
+    }
+    relay_only = args[0] == '1';
+    save_relay();
+    hdht_set_relay_only(&dht, relay_only);
     ok();
     return;
   }
@@ -929,6 +956,9 @@ at_init (void) {
   uint8_t a = 0;
   nvs_get_u8(nvs, "relay_auto", &a);
   relay_auto = a;
+  a = 0;
+  nvs_get_u8(nvs, "relay_only", &a);
+  relay_only = a;
   len = sizeof(topics);
   if (nvs_get_blob(nvs, "topics", topics, &len) == ESP_OK) topics_len = len / 32;
   len = sizeof(cred);
@@ -940,6 +970,7 @@ at_init (void) {
 // listen if asked to
 void
 at_dht_ready (void) {
+  hdht_set_relay_only(&dht, relay_only);
   if (relay_auto) find_relay(NULL);
   else if (has_relay) hdht_set_relay(&dht, relay);
   if (topics_len) {

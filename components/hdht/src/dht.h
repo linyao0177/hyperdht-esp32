@@ -209,6 +209,8 @@ struct hdht_s {
   uint8_t local_addresses_len;
   bool has_relay; // connect and accept through this blind relay (hdht_set_relay)
   uint8_t relay[32];
+  bool relay_only; // relayed connections never move to a direct path (hdht_set_relay_only)
+  uint32_t test_punch_delay_ms; // tests only: holepunch this much after the relay starts
   struct hdht_server_s *servers;
 
   bool destroyed;

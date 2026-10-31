@@ -2652,6 +2652,30 @@ udx_stream_change_remote (udx_stream_t *stream, udx_socket_t *socket, uint32_t r
   return !defer_change;
 }
 
+// Local patch 3 (hdht): sends the packets still unacked on the old path to
+// the new remote as well, so a dead old path (a relay the remote has already
+// left) cannot stall the stream. Copies that still arrive by the old path
+// are dropped by seq. The change counts as done.
+static void
+retarget_packet (udx_packet_t *pkt, udx_stream_t *stream) {
+  uint32_t id = udx__swap_uint32_if_be(stream->remote_id);
+  pkt->remote_id = stream->remote_id;
+  pkt->remote_addr = stream->remote_addr;
+  pkt->remote_addr_len = stream->remote_addr_len;
+  memcpy(pkt->header + 4, &id, 4);
+}
+
+void
+udx_stream_retarget_unacked (udx_stream_t *stream) {
+  for (uint32_t seq = stream->remote_acked; seq_compare(seq, stream->seq) < 0; seq++) {
+    udx_packet_t *pkt = (udx_packet_t *) udx__cirbuf_get(&stream->outgoing, seq);
+    if (pkt != NULL && pkt->remote_addr_len != 0) retarget_packet(pkt, stream);
+  }
+  if (stream->pkt != NULL && stream->pkt->remote_addr_len != 0) retarget_packet(stream->pkt, stream);
+  stream->remote_changing = false;
+  stream->on_remote_changed = NULL;
+}
+
 int
 udx_stream_connect (udx_stream_t *stream, udx_socket_t *socket, uint32_t remote_id, const struct sockaddr *remote_addr) {
   if (stream->status & UDX_STREAM_DEAD || stream->udx->teardown) {

@@ -192,7 +192,7 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 ## Limitations
 
 - **Random NAT on the device side**: no holepunching. hyperdht handles this case with up to 256 sockets ("birthday" punching), which a C3 cannot afford. Such a device connects through a blind relay instead (`hdht_set_relay`), which needs a relay node with a public address. Devices can find public relay nodes by topic (`hdht_relay_find`, [docs/relay-node.md](docs/relay-node.md)), and one runs on a cloud VM; more operators are needed. A device behind a consistent NAT can still reach peers behind random NATs directly.
-- **Relayed connections stay relayed**: hyperdht upgrades a relayed connection to a direct one when holepunching later succeeds; hdht does not.
+- **Relayed connections move to direct paths only by holepunching**: as in hyperdht, holepunching runs alongside the relay and a stream moves when it gets through. The LAN shortcut is not tried alongside a relay, and a relayed connection to a peer with a public address stays relayed.
 - **Not implemented**: immutable records, general Protomux (only the blind-relay channel), IPv6, reusable sockets, unordered UDX messages.
 - **The device is never a DHT routing node**: it is always an ephemeral, firewalled node, by design.
 - **ESP32-C3 only** for now. Other ESP32 variants should work but are untested.
@@ -202,7 +202,6 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 ## Contributing
 
 Issues and pull requests are welcome, especially:
-- upgrading relayed connections to direct ones
 - running public relay nodes ([docs/relay-node.md](docs/relay-node.md)) and anchor nodes ([docs/anchor-node.md](docs/anchor-node.md)); [`deploy/`](deploy) has Docker and systemd files
 - other ESP32 targets
 - smaller and faster crypto paths (an IRAM BLAKE2b, fixed-point BBR)

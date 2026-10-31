@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cenc.h"
 #include "crypto.h"
 #include "stream.h"
 
@@ -222,6 +223,11 @@ on_keepalive_close (uv_handle_t *handle) {
 }
 
 static void
+on_upgrade_timer_close (uv_handle_t *handle) {
+  closed_one(handle->data);
+}
+
+static void
 on_owned_socket_close (hdht_socket_t *socket) {
   hdht_stream_t *stream = socket->data;
   free(socket);
@@ -239,12 +245,15 @@ on_udx_finalize (udx_stream_t *udx) {
   hdht_stream_t *stream = udx->data;
   stream->udx_finalized = true;
   stream->connected = false;
+  if (stream->on_finalize) stream->on_finalize(stream);
+  stream->on_finalize = NULL;
   free(stream->msg);
   stream->msg = NULL;
   sodium_memzero(&stream->push, sizeof(stream->push));
   sodium_memzero(&stream->pull, sizeof(stream->pull));
 
-  stream->pending_closes = stream->owned_socket ? 2 : 1;
+  stream->upgrading = false;
+  stream->pending_closes = stream->owned_socket ? 3 : 2;
   if (stream->owned_socket) {
     stream->owned_socket->data = stream;
     hdht_socket_close(stream->owned_socket, on_owned_socket_close);
@@ -253,15 +262,25 @@ on_udx_finalize (udx_stream_t *udx) {
 
   uv_timer_stop(&stream->keepalive);
   uv_close((uv_handle_t *) &stream->keepalive, on_keepalive_close);
+  uv_timer_stop(&stream->upgrade_timer);
+  uv_close((uv_handle_t *) &stream->upgrade_timer, on_upgrade_timer_close);
 }
 
 static int
 on_udx_firewall (udx_stream_t *udx, udx_socket_t *socket, const struct sockaddr *from) {
   hdht_stream_t *stream = udx->data;
-  if (stream->on_firewall == NULL || from->sa_family != AF_INET) return 1;
+  if (from->sa_family != AF_INET) return 1;
 
   hdht_addr_t addr;
   hdht_addr_from_sockaddr(&addr, from);
+
+  // moved to a direct path: the remote may still send through the relay
+  if (stream->relay && socket->data == stream->relay_socket && hdht_addr_eq(&addr, &stream->relay_addr)) {
+    stream->relay_rx++;
+    return 0;
+  }
+
+  if (stream->on_firewall == NULL) return 1;
   return stream->on_firewall(stream, socket->data, &addr) ? 0 : 1;
 }
 
@@ -284,6 +303,8 @@ hdht_stream_init (hdht_t *dht, hdht_stream_t *stream, bool initiator) {
 
   uv_timer_init(dht->loop, &stream->keepalive);
   stream->keepalive.data = stream;
+  uv_timer_init(dht->loop, &stream->upgrade_timer);
+  stream->upgrade_timer.data = stream;
   return 0;
 }
 
@@ -316,6 +337,85 @@ hdht_stream_connect (hdht_stream_t *stream, hdht_socket_t *socket, uint32_t remo
   if (err) return err;
 
   uv_timer_start(&stream->keepalive, on_keepalive, stream->keepalive_ms, stream->keepalive_ms);
+  return 0;
+}
+
+// relay -> direct (connect.js onsocket and relay-connection.js confirmDirectUpgrade)
+
+static void
+end_upgrade (hdht_stream_t *stream) {
+  stream->upgrading = false;
+  uv_timer_stop(&stream->upgrade_timer);
+}
+
+// Once the remote answers on the direct path only, the relay connection can
+// go. An empty message every check gets an ack back, so a quiet stream is
+// checked too.
+static void
+on_upgrade_check (uv_timer_t *timer) {
+  hdht_stream_t *stream = timer->data;
+  if (!stream->upgrading || stream->destroying || stream->relay == NULL) {
+    end_upgrade(stream);
+    return;
+  }
+
+  uint64_t rx = stream->udx.packets_rx;
+  if (rx != stream->upgrade_rx && stream->relay_rx == 0) {
+    end_upgrade(stream);
+    struct hdht_relay_s *relay = stream->relay;
+    stream->relay = NULL;
+    hdht__relay_unbind(relay);
+    if (stream->on_direct) stream->on_direct(stream);
+    return;
+  }
+
+  // the remote keeps the relay: so do we, sending directly
+  if (++stream->upgrade_checks >= HDHT_STREAM_UPGRADE_MAX) {
+    end_upgrade(stream);
+    return;
+  }
+  stream->upgrade_rx = rx;
+  stream->relay_rx = 0;
+  hdht_stream_write(stream, NULL, 0);
+}
+
+static void
+on_unused_socket_close (hdht_socket_t *socket) {
+  free(socket);
+}
+
+int
+hdht_stream_upgrade (hdht_stream_t *stream, hdht_socket_t *socket, uint32_t remote_id, const hdht_addr_t *addr) {
+  // the relayed stream uses the main socket, so it owns none yet
+  if (!stream->connected || stream->destroying || stream->ended || stream->relay == NULL || stream->upgrading || stream->owned_socket) {
+    hdht_socket_close(socket, on_unused_socket_close);
+    return HDHT_STREAM_ECLOSED;
+  }
+
+  struct sockaddr_in sa;
+  hdht_addr_to_sockaddr(addr, &sa);
+  int err = udx_stream_change_remote(&stream->udx, &socket->udx, remote_id, (const struct sockaddr *) &sa, NULL);
+  if (err < 0) {
+    hdht_socket_close(socket, on_unused_socket_close);
+    return err;
+  }
+  // the remote may have left the relay already (it got through directly
+  // first): what we sent there must come the direct way too
+  udx_stream_retarget_unacked(&stream->udx);
+
+  stream->owned_socket = socket;
+  stream->socket = socket;
+  stream->remote_id = remote_id;
+  stream->remote_addr = *addr;
+
+  stream->upgrading = true;
+  stream->relay_rx = 0;
+  stream->upgrade_rx = stream->udx.packets_rx;
+  stream->upgrade_checks = 0;
+  uv_timer_start(&stream->upgrade_timer, on_upgrade_check, HDHT_STREAM_UPGRADE_MS, HDHT_STREAM_UPGRADE_MS);
+
+  // lets the remote see the direct path without waiting for our next write
+  hdht_stream_write(stream, NULL, 0);
   return 0;
 }
 

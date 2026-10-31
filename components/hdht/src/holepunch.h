@@ -99,6 +99,11 @@ hdht_puncher_probe (hdht_puncher_t *p, const hdht_addr_t *to, bool low_ttl);
 bool
 hdht_puncher_punch (hdht_puncher_t *p);
 
+// Stops the probe loop but keeps the socket open: the peer may already have
+// got through to it (a relayed connection still moves to it then).
+void
+hdht_puncher_stop (hdht_puncher_t *p);
+
 // Gives the socket to the caller (the stream) so destroy does not close it.
 hdht_socket_t *
 hdht_puncher_release_socket (hdht_puncher_t *p);

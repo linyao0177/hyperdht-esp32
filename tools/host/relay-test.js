@@ -8,6 +8,11 @@
 //   client <key> [relay key]   connects, sends a message, prints the echo and
 //                              the address the stream runs over
 //
+// Server and client print "moved to <address>" when a relayed stream moves to
+// a direct path. HOLD=<seconds> keeps the client open after the echo, writing
+// once a second. FIREWALLED=1 makes the peer act firewalled, so a direct
+// path needs holepunching (on a local testnet everyone is reachable).
+//
 // Every output line starts with RELAY|, SERVER| or CLIENT|.
 
 const HyperDHT = require('hyperdht')
@@ -15,6 +20,9 @@ const relay = require('blind-relay')
 
 const [where, command, ...args] = process.argv.slice(2)
 const dht = new HyperDHT({ bootstrap: where === 'public' ? undefined : [where] })
+// the node finds itself reachable at once on a local testnet; without a
+// remote address a server offers holepunching instead of a direct connect
+if (process.env.FIREWALLED) dht.remoteAddress = () => null
 const hex = (k) => Buffer.from(k, 'hex')
 
 async function runRelay () {
@@ -39,6 +47,7 @@ async function runServer (relayKey) {
   const s = dht.createServer({ relayThrough: relayKey ? hex(relayKey) : null }, (conn) => {
     const raw = conn.rawStream
     console.log(`SERVER|connection from ${conn.remotePublicKey.toString('hex').slice(0, 16)} over ${raw.remoteHost}:${raw.remotePort}`)
+    raw.on('remote-changed', () => console.log(`SERVER|moved to ${raw.remoteHost}:${raw.remotePort}`))
     conn.on('data', (data) => conn.write(data))
     conn.on('end', () => conn.end())
     conn.on('error', (err) => console.log('SERVER|error ' + err.message))
@@ -59,10 +68,16 @@ async function runClient (key, relayKey) {
   conn.on('open', () => {
     const raw = conn.rawStream
     console.log(`CLIENT|open after ${Date.now() - started} ms over ${raw.remoteHost}:${raw.remotePort}`)
+    raw.on('remote-changed', () => console.log(`CLIENT|moved to ${raw.remoteHost}:${raw.remotePort} after ${Date.now() - started} ms`))
     conn.write(Buffer.from('hello through the relay'))
   })
   conn.once('data', async (data) => {
     console.log('CLIENT|echo ' + data.toString())
+    const hold = Number(process.env.HOLD || 0)
+    for (let i = 1; i <= hold; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      conn.write(Buffer.from('ping ' + i))
+    }
     conn.end()
     await new Promise((resolve) => setTimeout(resolve, 300))
     await dht.destroy()

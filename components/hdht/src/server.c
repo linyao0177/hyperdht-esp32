@@ -1,6 +1,8 @@
 // Server (hyperdht/lib/server.js + announcer.js): announce our key to the
 // closest nodes, answer relayed Noise handshakes, and holepunch with clients,
 // or pair with them at a blind relay when either side asks (relay.c).
+// Holepunching runs alongside the relay; when it gets through after the
+// relay, the stream moves to the direct path.
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +17,7 @@
 #define MIN_ACTIVE_RELAYS     3
 #define HANDSHAKE_TIMEOUT_MS  10000
 #define HANDSHAKE_CLEAR_MS    10000
+#define UPGRADE_WAIT_MS       40000 // a relayed stream may move to a direct path this long
 
 struct hdht_server_handshake_s {
   hdht_server_t *server;
@@ -28,17 +31,18 @@ struct hdht_server_handshake_s {
 
   hdht_noise_payload_t remote;
   hdht_addr_t client_addr;
-  hdht_stream_t *stream; // until connected
+  hdht_stream_t *stream; // until connected, or until a relayed one moves
   hdht_puncher_t *puncher;
   uint8_t holepunch_secret[32];
   uint8_t local_secret[32];
   bool has_secret;
   uint32_t round;
 
-  // blind relay instead of holepunching
+  // blind relay, with holepunching alongside unless relay_only
   bool relaying;
   hdht_relay_t *relay; // pairing, until it reports
   uint8_t relay_token[32];
+  bool upgrading; // stream runs through the relay; holepunching goes on
 
   // a holepunch request waiting for NAT analysis
   bool deferred;
@@ -69,7 +73,8 @@ is_server_relay (hdht_server_t *s, const hdht_addr_t *addr) {
 
 // handshake state
 
-// Drops the stream of a handshake that never connected.
+// Drops the stream of a handshake that never connected. A relayed stream
+// stays on the relay.
 static void
 destroy_pending_stream (hdht_server_handshake_t *h) {
   hdht_stream_t *stream = h->stream;
@@ -77,7 +82,9 @@ destroy_pending_stream (hdht_server_handshake_t *h) {
   h->stream = NULL;
   stream->owner = NULL;
   stream->on_firewall = NULL;
-  hdht_stream_destroy(stream, HDHT_STREAM_ECONNECT);
+  stream->on_finalize = NULL;
+  if (h->upgrading) h->upgrading = false;
+  else hdht_stream_destroy(stream, HDHT_STREAM_ECONNECT);
 }
 
 static void
@@ -128,12 +135,31 @@ abort_handshake (hdht_server_handshake_t *h) {
   clear_later(h);
 }
 
+// Holepunching is over without a direct path. A relayed handshake keeps its
+// relay, still pairing or carrying the stream, and its puncher socket, which
+// the client may already have got through to.
 static void
-on_prepunch_timeout (uv_timer_t *timer) {
+punch_over (hdht_server_handshake_t *h) {
+  if (!h->relaying) {
+    abort_handshake(h);
+    return;
+  }
+  if (h->puncher) hdht_puncher_stop(h->puncher);
+  if (!h->upgrading) uv_timer_stop(&h->timer); // the relay times out by itself
+}
+
+static void
+on_upgrade_timeout (uv_timer_t *timer) {
   abort_handshake(timer->data);
 }
 
-// The client reached our stream: connect it there (server.js onsocket).
+static void
+on_prepunch_timeout (uv_timer_t *timer) {
+  punch_over(timer->data);
+}
+
+// The client reached our stream: connect it there (server.js onsocket). A
+// stream already on the relay moves to the puncher socket instead.
 static void
 on_socket (hdht_server_handshake_t *h, hdht_socket_t *socket, const hdht_addr_t *from) {
   hdht_stream_t *stream = h->stream;
@@ -141,15 +167,25 @@ on_socket (hdht_server_handshake_t *h, hdht_socket_t *socket, const hdht_addr_t 
   h->stream = NULL;
 
   hdht_server_t *s = h->server;
-  if (h->puncher && socket == h->puncher->socket) stream->owned_socket = hdht_puncher_release_socket(h->puncher);
+  hdht_socket_t *punched = h->puncher && socket == h->puncher->socket ? hdht_puncher_release_socket(h->puncher) : NULL;
   if (h->puncher) hdht_puncher_destroy(h->puncher);
   h->puncher = NULL;
+  if (h->relay) hdht_relay_cancel(h->relay); // the direct path won
+  h->relay = NULL;
 
   stream->owner = NULL;
   stream->on_firewall = NULL;
+  stream->on_finalize = NULL;
 
   uv_timer_stop(&h->timer);
   clear_later(h);
+
+  if (h->upgrading) {
+    h->upgrading = false;
+    if (punched) hdht_stream_upgrade(stream, punched, h->remote.udx_id, from);
+    return;
+  }
+  stream->owned_socket = punched;
 
   if (hdht_stream_connect(stream, socket, h->remote.udx_id, from) != 0) {
     hdht_stream_destroy(stream, HDHT_STREAM_ECONNECT);
@@ -164,16 +200,28 @@ static bool
 on_stream_firewall (hdht_stream_t *stream, hdht_socket_t *socket, const hdht_addr_t *from) {
   hdht_server_handshake_t *h = stream->owner;
   if (h == NULL || socket == NULL) return false;
-  // relayed: the relay forwards before it tells us our stream id; UDX resends
-  if (h->relaying) return false;
+  // with a relay, only the puncher socket brings the client directly; the
+  // relay forwards before it tells us our stream id (UDX resends)
+  if (h->relaying && !(h->puncher && socket == h->puncher->socket)) return false;
   on_socket(h, socket, from);
   return stream->connected;
+}
+
+// A relayed stream closed while holepunching went on.
+static void
+on_stream_finalize (hdht_stream_t *stream) {
+  hdht_server_handshake_t *h = stream->owner;
+  if (h) abort_handshake(h);
 }
 
 static void
 on_puncher_abort (hdht_puncher_t *p) {
   hdht_server_handshake_t *h = p->data;
-  h->puncher = NULL; // destroyed by abort_handshake below via the pointer we just cleared
+  if (h->relaying) {
+    punch_over(h);
+    return;
+  }
+  h->puncher = NULL;
   hdht_puncher_destroy(p);
   abort_handshake(h);
 }
@@ -211,22 +259,32 @@ on_relay_paired (hdht_relay_t *r, int status, uint32_t remote_id, void *data) {
   hdht_server_handshake_t *h = data;
   h->relay = NULL;
   hdht_stream_t *stream = h->stream;
-  if (status != 0 || stream == NULL) {
-    if (status == 0) hdht_relay_cancel(r);
-    abort_handshake(h);
+  if (status == 0 && (stream == NULL || hdht_relay_connect(r, stream, remote_id) != 0)) {
+    hdht_relay_cancel(r);
+    status = HDHT_CONNECT_ERELAY;
+  }
+  if (status != 0) {
+    // holepunching may still get through
+    if (stream && h->puncher) {
+      h->relaying = false;
+      if (!h->puncher->punching) uv_timer_start(&h->timer, on_prepunch_timeout, HANDSHAKE_TIMEOUT_MS, 0);
+    } else {
+      abort_handshake(h);
+    }
     return;
   }
 
-  h->stream = NULL;
-  stream->owner = NULL;
-  stream->on_firewall = NULL;
-  uv_timer_stop(&h->timer);
-  clear_later(h);
-
-  if (hdht_relay_connect(r, stream, remote_id) != 0) {
-    hdht_relay_cancel(r);
-    hdht_stream_destroy(stream, HDHT_STREAM_ECONNECT);
-    return;
+  if (h->puncher) {
+    // holepunching goes on and may still move the stream
+    h->upgrading = true;
+    stream->on_finalize = on_stream_finalize;
+    uv_timer_start(&h->timer, on_upgrade_timeout, UPGRADE_WAIT_MS, 0);
+  } else {
+    h->stream = NULL;
+    stream->owner = NULL;
+    stream->on_firewall = NULL;
+    uv_timer_stop(&h->timer);
+    clear_later(h);
   }
 
   hdht_server_t *s = h->server;
@@ -354,14 +412,12 @@ add_handshake (hdht_server_t *s, const hdht_incoming_t *req, const hdht_handshak
   h->has_secret = true;
   randombytes_buf(h->local_secret, sizeof(h->local_secret));
 
-  if (h->relaying) {
-    if (!start_relay(h)) {
-      abort_handshake(h);
-      return h;
-    }
-    uv_timer_start(&h->timer, on_prepunch_timeout, 2 * HANDSHAKE_TIMEOUT_MS, 0);
+  if (h->relaying && !start_relay(h)) {
+    abort_handshake(h);
     return h;
   }
+  // the relay times out by itself
+  if (h->relaying && dht->relay_only) return h;
 
   // same public IP: the client will try our LAN address, keep replying from the main socket
   bool same_ip = memcmp(h->client_addr.ip, req->to.ip, 4) == 0;
@@ -369,7 +425,7 @@ add_handshake (hdht_server_t *s, const hdht_incoming_t *req, const hdht_handshak
   for (int i = 0; i < h->remote.addresses4_len; i++) client_lan = client_lan || hdht_ip_is_private(h->remote.addresses4[i].ip);
 
   if (!setup_puncher(h)) {
-    abort_handshake(h);
+    punch_over(h);
     return h;
   }
   h->reply_from_puncher = !(same_ip && client_lan && dht->local_addresses_len > 0);
@@ -458,7 +514,7 @@ abort_holepunch (hdht_server_handshake_t *h, const hdht_incoming_t *req, const h
   p.error = error;
   p.round = h->round;
   send_holepunch_reply(h, req, peer_addr, &p, &h->server->dht->socket);
-  abort_handshake(h);
+  punch_over(h);
 }
 
 static bool
@@ -488,7 +544,7 @@ answer_holepunch (hdht_server_handshake_t *h, const hdht_incoming_t *req, const 
   }
 
   if (p->remote_punching) {
-    uv_timer_stop(&h->timer); // past the prepunch stage
+    if (!h->upgrading) uv_timer_stop(&h->timer); // past the prepunch stage
     if (!hdht_puncher_punch(p)) {
       abort_holepunch(h, req, peer_addr, HDHT_ERROR_ABORTED);
       return;
@@ -528,8 +584,8 @@ on_peer_holepunch (hdht_server_t *s, const hdht_incoming_t *req) {
   hdht_server_handshake_t *h = msg.id < HDHT_SERVER_MAX_HANDSHAKES ? s->handshakes[msg.id] : NULL;
   if (h == NULL || h->closed || !h->has_secret) return;
 
-  // relaying: refuse to punch, so the client waits for the relay instead
-  if (h->relaying) {
+  // relaying without a puncher: refuse, so the client waits for the relay
+  if (h->relaying && h->puncher == NULL) {
     hdht_holepunch_payload_t refuse = {0};
     refuse.error = HDHT_ERROR_ABORTED;
     refuse.round = h->round;

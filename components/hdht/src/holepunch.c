@@ -308,6 +308,12 @@ hdht_puncher_punch (hdht_puncher_t *p) {
   return true;
 }
 
+void
+hdht_puncher_stop (hdht_puncher_t *p) {
+  p->punching = false;
+  uv_timer_stop(&p->timer);
+}
+
 // remote state
 
 void

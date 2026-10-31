@@ -1,7 +1,8 @@
 // Client connect (hyperdht/lib/connect.js): find the server's relay nodes,
 // run the Noise handshake through one of them, then connect directly, over
 // the LAN, by holepunching, or through a blind relay when either side asks
-// for one (relay.c).
+// for one (relay.c). Holepunching runs alongside the relay; when it gets
+// through after the relay, the stream moves to the direct path.
 
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +69,8 @@ struct hdht_connect_s {
   uint8_t relay_token[32];
   bool use_relay; // ours; off for the connection to a relay itself
   bool no_relay;  // never pair, even when the server asks
+  bool upgrading; // the stream runs through the relay; holepunching goes on
+  bool punch_later; // test_punch_delay_ms: holepunching starts on the timer
 
   uv_timer_t timer;    // sleeps between holepunch steps
   uv_timer_t deadline; // whole connect
@@ -110,6 +113,7 @@ static void
 finish (hdht_connect_t *c, int error) {
   if (c->state == C_DONE) return;
   c->state = C_DONE;
+  if (c->upgrading) error = 0; // the stream stays on the relay
 
   cancel_requests(c);
   if (c->puncher) hdht_puncher_destroy(c->puncher);
@@ -122,6 +126,7 @@ finish (hdht_connect_t *c, int error) {
   hdht_stream_t *stream = c->stream;
   stream->owner = NULL;
   stream->on_firewall = NULL;
+  stream->on_finalize = NULL;
 
   c->pending_closes = 2;
   uv_timer_stop(&c->timer);
@@ -133,12 +138,21 @@ finish (hdht_connect_t *c, int error) {
 }
 
 // Connects the stream on socket to addr; a puncher socket moves to the stream.
+// A stream already on the relay moves to the puncher socket instead.
 static void
 connect_stream (hdht_connect_t *c, hdht_socket_t *socket, const hdht_addr_t *addr) {
   if (c->state == C_DONE) return;
 
   hdht_stream_t *stream = c->stream;
-  if (c->puncher && socket == c->puncher->socket) stream->owned_socket = hdht_puncher_release_socket(c->puncher);
+  bool punched = c->puncher && socket == c->puncher->socket;
+
+  if (c->upgrading) {
+    if (punched) hdht_stream_upgrade(stream, hdht_puncher_release_socket(c->puncher), c->payload.udx_id, addr);
+    finish(c, 0);
+    return;
+  }
+
+  if (punched) stream->owned_socket = hdht_puncher_release_socket(c->puncher);
 
   int err = hdht_stream_connect(stream, socket, c->payload.udx_id, addr);
   finish(c, err ? HDHT_CONNECT_EHANDSHAKE : 0);
@@ -154,10 +168,34 @@ static bool
 on_stream_firewall (hdht_stream_t *stream, hdht_socket_t *socket, const hdht_addr_t *from) {
   hdht_connect_t *c = stream->owner;
   if (c == NULL || c->state == C_FINDING || c->state == C_DONE || socket == NULL) return false;
-  // relayed: the relay forwards before it tells us our stream id; UDX resends
-  if (c->state == C_RELAYING) return false;
+  // with a relay, only the puncher socket brings the server directly; the
+  // relay forwards before it tells us our stream id (UDX resends)
+  bool relaying = c->relay != NULL || c->upgrading;
+  if (relaying && !(c->puncher && socket == c->puncher->socket)) return false;
   connect_stream(c, socket, from);
   return stream->connected;
+}
+
+// The stream closed while we were still working on it.
+static void
+on_stream_finalize (hdht_stream_t *stream) {
+  hdht_connect_t *c = stream->owner;
+  if (c) finish(c, 0);
+}
+
+// Holepunching gave up. With a relay, that path goes on; the puncher socket
+// stays until we finish, since the server may already have got through to it.
+static void
+punch_failed (hdht_connect_t *c, int error) {
+  if (c->relay == NULL && !c->upgrading) {
+    finish(c, error);
+    return;
+  }
+  if (c->holepunch_req) hdht_request_cancel(c->holepunch_req);
+  c->holepunch_req = NULL;
+  if (c->puncher) hdht_puncher_stop(c->puncher);
+  uv_timer_stop(&c->timer);
+  c->state = C_RELAYING;
 }
 
 // holepunch requests
@@ -229,7 +267,7 @@ abort_holepunch (hdht_connect_t *c, int error) {
   c->holepunch_req = NULL;
   send_holepunch(c, &c->server_relay.relay_address, &c->server_relay.peer_address, &p, on_abort_reply);
   c->holepunch_req = NULL; // fire and forget
-  finish(c, error);
+  punch_failed(c, error);
 }
 
 static void
@@ -240,7 +278,7 @@ on_puncher_connect (hdht_puncher_t *p, const hdht_addr_t *from) {
 
 static void
 on_puncher_abort (hdht_puncher_t *p) {
-  finish(p->data, HDHT_CONNECT_EHOLEPUNCH);
+  punch_failed(p->data, HDHT_CONNECT_EHOLEPUNCH);
 }
 
 static void
@@ -252,7 +290,7 @@ on_round_reply (hdht_request_t *req, const hdht_response_t *res) {
   hdht_holepunch_payload_t remote;
   hdht_addr_t peer_addr;
   if (open_holepunch_reply(c, res, &c->relay_addr, &remote, &peer_addr) != 0 || remote.error != HDHT_ERROR_NONE) {
-    finish(c, HDHT_CONNECT_EHOLEPUNCH);
+    punch_failed(c, HDHT_CONNECT_EHOLEPUNCH);
     return;
   }
 
@@ -264,7 +302,7 @@ on_round_reply (hdht_request_t *req, const hdht_response_t *res) {
   hdht_puncher_update_remote(c->puncher, remote.punching, remote.firewall, remote.addresses, remote.has_addresses ? remote.addresses_len : 0, echoed ? c->server_addr.ip : NULL);
 
   if (!c->puncher->remote_punching || !hdht_puncher_punch(c->puncher)) {
-    finish(c, HDHT_CONNECT_EHOLEPUNCH);
+    punch_failed(c, HDHT_CONNECT_EHOLEPUNCH);
     return;
   }
 
@@ -286,7 +324,7 @@ round_punch (hdht_connect_t *c) {
     memcpy(p.remote_token, c->remote_token, 32);
   }
 
-  if (send_holepunch(c, &c->relay_addr, &c->server_addr, &p, on_round_reply) != 0) finish(c, HDHT_CONNECT_ENOMEM);
+  if (send_holepunch(c, &c->relay_addr, &c->server_addr, &p, on_round_reply) != 0) punch_failed(c, HDHT_CONNECT_ENOMEM);
 }
 
 static void
@@ -344,7 +382,7 @@ on_probe_reply (hdht_request_t *req, const hdht_response_t *res) {
   hdht_holepunch_payload_t remote;
   hdht_addr_t peer_addr;
   if (open_holepunch_reply(c, res, &c->server_relay.relay_address, &remote, &peer_addr) != 0 || remote.error != HDHT_ERROR_NONE) {
-    finish(c, HDHT_CONNECT_EHOLEPUNCH);
+    punch_failed(c, HDHT_CONNECT_EHOLEPUNCH);
     return;
   }
 
@@ -377,7 +415,7 @@ probe_round (hdht_connect_t *c) {
   p.remote_address = c->server_addr;
 
   if (send_holepunch(c, &c->server_relay.relay_address, &c->server_relay.peer_address, &p, on_probe_reply) != 0) {
-    finish(c, HDHT_CONNECT_ENOMEM);
+    punch_failed(c, HDHT_CONNECT_ENOMEM);
   }
 }
 
@@ -385,7 +423,7 @@ static void
 start_holepunch (hdht_connect_t *c) {
   c->puncher = hdht_puncher_create(c->dht, true, c->payload.firewall, c);
   if (c->puncher == NULL) {
-    finish(c, HDHT_CONNECT_ENOMEM);
+    punch_failed(c, HDHT_CONNECT_ENOMEM);
     return;
   }
   c->puncher->on_connect = on_puncher_connect;
@@ -453,10 +491,14 @@ on_relay_paired (hdht_relay_t *r, int status, uint32_t remote_id, void *data) {
   hdht_connect_t *c = data;
   c->relay = NULL;
   if (status == 0 && hdht_relay_connect(r, c->stream, remote_id) == 0) {
-    finish(c, 0);
+    // holepunching goes on and may still move the stream
+    if (c->puncher || c->punch_later) c->upgrading = true;
+    else finish(c, 0);
     return;
   }
   if (status == 0) hdht_relay_cancel(r);
+  // holepunching may still get through, unless it is over
+  if (c->punch_later || (c->puncher && c->state != C_RELAYING)) return;
   finish(c, HDHT_CONNECT_ERELAY);
 }
 
@@ -470,6 +512,13 @@ start_relay (hdht_connect_t *c) {
   if (hdht_relay_pair(c->dht, key, token, !theirs, c->stream->local_id, on_relay_paired, c, &c->relay) != 0) finish(c, HDHT_CONNECT_ERELAY);
 }
 
+static void
+on_punch_later (uv_timer_t *timer) {
+  hdht_connect_t *c = timer->data;
+  c->punch_later = false;
+  if (c->state == C_RELAYING) start_holepunch(c);
+}
+
 // connect.js holepunch(): choose how to reach the server.
 static void
 choose_path (hdht_connect_t *c) {
@@ -481,9 +530,16 @@ choose_path (hdht_connect_t *c) {
     return;
   }
 
-  // a relay was asked for: no direct path is tried alongside it
+  // a relay was asked for: holepunching runs alongside it, unless we keep to the relay
   if (!c->no_relay && (c->use_relay || c->payload.has_relay_through)) {
     start_relay(c);
+    if (c->state != C_RELAYING || !holepunchable || c->dht->relay_only) return;
+    if (c->dht->test_punch_delay_ms == 0) {
+      start_holepunch(c);
+      return;
+    }
+    c->punch_later = true;
+    uv_timer_start(&c->timer, on_punch_later, c->dht->test_punch_delay_ms, 0);
     return;
   }
 
@@ -649,6 +705,7 @@ hdht__connect (hdht_t *dht, hdht_stream_t *stream, const uint8_t remote_public_k
   hdht_hash(c->target, remote_public_key, 32);
   stream->owner = c;
   stream->on_firewall = on_stream_firewall;
+  stream->on_finalize = on_stream_finalize;
 
   uv_timer_init(dht->loop, &c->timer);
   c->timer.data = c;

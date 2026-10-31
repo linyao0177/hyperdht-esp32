@@ -684,6 +684,11 @@ udx_stream_connect (udx_stream_t *stream, udx_socket_t *socket, uint32_t remote_
 int
 udx_stream_change_remote (udx_stream_t *stream, udx_socket_t *socket, uint32_t remote_id, const struct sockaddr *remote_addr, udx_stream_remote_changed_cb remote_changed_cb);
 
+// Local patch (hdht): after udx_stream_change_remote, also send the packets
+// still unacked on the old path to the new remote.
+void
+udx_stream_retarget_unacked (udx_stream_t *stream);
+
 int
 udx_stream_relay_to (udx_stream_t *stream, udx_stream_t *destination);
 
