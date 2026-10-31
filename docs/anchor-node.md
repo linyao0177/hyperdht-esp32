@@ -14,6 +14,7 @@ This is a public testnet. Payments are verified but not yet settled, so running 
 | Gas | USDC, from the [Circle faucet](https://faucet.circle.com) (pick Arc Testnet) |
 | Explorer | `https://explorer.testnet.arc.io` |
 | Discovery topic | `BLAKE2b-256("open-anchor/1 5042002 <contract, lowercase>")` on the public HyperDHT |
+| Running node | `did:mw:e8f0b35d17b6e4126591da9dd03a81f112421ffd71600ee6e692522da455693a`, on a cloud VM since 2026-10-31 ([results](../examples/boat_mer/README.md#results-a-node-on-a-cloud-vm-2026-10-31-same-board)); more operators are needed |
 
 The contract has no owner, no operator role and no upgrade path. The first anchor of a root is kept, with the wallet that anchored it and the block time.
 

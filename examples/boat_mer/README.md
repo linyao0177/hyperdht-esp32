@@ -223,7 +223,19 @@ What this does not cover yet:
 - **Mirrors.** Only the node itself serves its log. To verify node 2 after it stopped, it had to be restarted. Independent mirrors that keep replicating are needed so receipts outlive nodes.
 - **Node-signed receipts.** HashAnchor receipts have an optional `signature` field; here the authenticated stream stands in for it, which helps only the device.
 - **Spam on the topic.** Lookup replies are unsigned, and anyone can announce under the topic. The board checks each key's record and keeps at most 3 nodes, so many bogus keys can delay discovery. Ranking nodes by record age or stake would help.
-- **Explorer source verification** of the contract (see the [operator guide](../../docs/anchor-node.md#the-network)).
+
+### Results: a node on a cloud VM (2026-10-31, same board)
+
+One anchor node runs on a Google Cloud e2-small in Taiwan as a systemd service from [`deploy/`](../../deploy), with its own wallet. It was the only node on the topic. The board again had the contract address only.
+
+| | Result |
+|---|---|
+| Discovery | The first lookup found the node; its record was valid, and the board connected to the VM's public address |
+| Receipts | 5 of 5 in 3 minutes of output, every Merkle proof valid, 0 rejected, 0 overdue |
+| Submit to receipt | 9.2–19.6 s with 20 s batches |
+| Gas | 18 anchors cost 0.0198 USDC, about 0.0011 each |
+| Independent verification | `anchor-verify.js` from the two DIDs only: 6 of 6 leaves pass (the board kept submitting), log replicated in 3.3 s |
+| Free heap | ~140.5 KB steady |
 
 ## Integration notes
 
