@@ -1,6 +1,6 @@
 # uart_module: the ESP32-C3 as a network module
 
-Firmware that makes the C3 a module a host MCU drives over a serial line, like an AT-command WiFi module. The host gets an identity (`did:mw:<key>`), encrypted connections to any peer by DID (through a blind relay where holepunching cannot work), signed records, topic lookup and announce, and Ed25519 signing. It needs no network stack or cryptography of its own, and no changes to this firmware.
+Firmware that makes the C3 a module a host MCU drives over a serial line, like an AT-command WiFi module. The host gets an identity (`did:mw:<key>`), encrypted connections to any peer by DID (through a blind relay where holepunching cannot work), signed records, topic lookup and announce, and Ed25519 signing. It can also check camera events that carry a zero-knowledge proof as they arrive. It needs no network stack or cryptography of its own, and no changes to this firmware.
 
 The command reference is [docs/module-uart.md](../../docs/module-uart.md).
 
@@ -9,6 +9,7 @@ The command reference is [docs/module-uart.md](../../docs/module-uart.md).
 | [`main/port.c`](main/port.c) | The command port: USB Serial/JTAG for development, UART1 on two pins for a host MCU. Whole lines in and out, safe from any task |
 | [`main/main.c`](main/main.c) | Identity from a seed in NVS, WiFi from `AT+WIFI` or the firmware's default, and the hdht task |
 | [`main/at.c`](main/at.c) | The commands and events |
+| [`main/zk.c`](main/zk.c) | Checks camera events with proofs (`AT+ZKROOT`, `+ZK`) on a task of its own, with the time window and replay check. [`main/zk_vk.h`](main/zk_vk.h) is the event_v2 circuit's verifying key, made with [`components/zk/gen/vk_header.py`](../../components/zk/gen/vk_header.py) |
 | [`tools/module_host.py`](../../tools/module_host.py) | A host on a computer: an interactive terminal, and the library the test uses. Read it as a reference for a host MCU's driver: send a line, collect result lines until `OK` or `ERROR`, and take everything else starting with `+` as an event |
 | [`tools/module_test.py`](../../tools/module_test.py) | End-to-end test: the computer is the host MCU, and Node.js peers ([`tools/host/module-peer.js`](../../tools/host/module-peer.js)) are the network |
 
@@ -75,6 +76,24 @@ The test runs found three problems, all fixed above:
 - `AT+CLOSE` waited forever for a peer that never ended its side. It now closes the link after 5 s.
 - `AT+PUT` answered `busy` while the module was republishing at startup. It now queues the new record, and returns the seq to wait for.
 - Some event names were the same as result names (`+WIFI`, `+LISTEN`), so a host could not tell them apart. The events are now `+NET` and `+LISTENING`.
+
+## Camera events with proofs (2026-11-04, firmware 0.6)
+
+A reCamera on the same LAN connected to the module by DID, over a direct link, and sent event_v2 messages: each a person detection with a Groth16 proof, made on the camera in about 2.1 s. The module had `AT+ZKROOT` set to the test registry's root, and the host answered each `+ZK` with an ack.
+
+| | Result |
+|---|---|
+| 10 events, 2 of them with `conf` raised by 0.001 after proving | 8 `VALID`, the 2 changed ones `INVALID`. Every event was acked |
+| The first event sent again, byte for byte | `REPLAY`, 130 ms after its `+DATA` (no proof check needed) |
+| Time per event on the module | 1.24 s from `+DATA` to `+ZK`. The camera saw 1.30–1.40 s from sending to its ack |
+| An event proven a day earlier | `STALE` |
+| `conf` with 4 decimals | `BAD` |
+| Plain text on the same link | `+DATA` only, no `+ZK` |
+| Clock | set by SNTP about 6 s after reset, 0.01–0.13 s from the computer's |
+| Free heap | 89–95 KB with the verify task running (its 24 KB stack peaked at 21 KB) |
+| Image | 1.26 MB (0x1336e0); 18% of the app partition free |
+
+The camera's proving key stays with the camera team, so `module_test.py` checks the module with old events and changed ones (`STALE`, `INVALID`, `BAD`). `VALID` and `REPLAY` need a camera, or that key.
 
 ## Not covered yet
 

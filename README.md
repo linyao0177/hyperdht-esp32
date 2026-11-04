@@ -173,6 +173,7 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`components/libudx`](components/libudx) | Vendored [libudx](https://github.com/holepunchto/libudx) with two bug fixes, plus ESP-IDF glue |
 | [`components/uv_esp`](components/uv_esp) | The libuv subset libudx and hdht need, on lwIP |
 | [`components/hdht_ble`](components/hdht_ble) | SecretStream over BLE GATT (NimBLE) |
+| [`components/zk`](components/zk) | Groth16 verification on alt_bn128 (circom/snarkjs proofs) with vendored [mcl](https://github.com/herumi/mcl), and the camera event format that uses it |
 | [`examples/minimal`](examples/minimal) | Start here: a device reachable by key, NVS identity, cross-task data |
 | [`examples/uart_module`](examples/uart_module) | The C3 as a network module: a host MCU drives it with AT-style commands over a serial line ([command reference](docs/module-uart.md)) |
 | [`examples/app_template`](examples/app_template) | Template for a product with no server: signed record, claim with a setup code, owner-signed grants, revocation, signed readings kept by any peer |

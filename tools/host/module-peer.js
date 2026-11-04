@@ -7,6 +7,8 @@
 //                             under BLAKE2b-256(topic name), echoes every message;
 //                             --half-open never ends its side, like a stuck peer
 //   dial <did> <text>         connects, sends text, prints the first reply
+//   send <did>                connects, then sends each line of stdin as one
+//                             message, waiting for a reply to each (printed)
 //   get <did>                 reads and prints a mutable record (checked by hyperdht)
 //   lookup <hex topic>        prints the keys announced under a topic, each with
 //                             the number of nodes listing it
@@ -66,6 +68,33 @@ async function dial (did, text) {
   })
 }
 
+async function send (did) {
+  const lines = require('fs').readFileSync(0, 'utf8').split('\n').filter((l) => l.trim())
+  const conn = dht.connect(keyOf(did))
+  conn.on('error', (err) => {
+    console.log('PEER|error ' + err.message)
+    process.exit(1)
+  })
+  const replies = []
+  let waiting = null
+  conn.on('data', (data) => {
+    if (waiting) waiting(data)
+    else replies.push(data)
+  })
+  await new Promise((resolve) => conn.once('open', resolve))
+  console.log('PEER|open')
+  for (const line of lines) {
+    conn.write(Buffer.from(line))
+    const data = replies.shift() || await new Promise((resolve) => { waiting = resolve })
+    waiting = null
+    console.log('PEER|reply ' + data.toString())
+  }
+  conn.end()
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  await dht.destroy()
+  process.exit(0)
+}
+
 async function get (did) {
   const res = await dht.mutableGet(keyOf(did))
   console.log(res ? `PEER|record seq=${res.seq} value=${res.value.toString()}` : 'PEER|record none')
@@ -84,9 +113,9 @@ async function lookup (topic) {
   await dht.destroy()
 }
 
-const commands = { serve, dial, get, lookup }
+const commands = { serve, dial, send, get, lookup }
 if (!commands[command]) {
-  console.error('usage: node module-peer.js <serve | dial | get | lookup> [args]')
+  console.error('usage: node module-peer.js <serve | dial | send | get | lookup> [args]')
   process.exit(1)
 }
 commands[command](...args)

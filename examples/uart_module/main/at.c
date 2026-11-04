@@ -187,6 +187,9 @@ on_link_data (hdht_stream_t *stream, const uint8_t *data, size_t len) {
     size_t n = len - off < MAX_SEND ? len - off : MAX_SEND;
     port_printf("+DATA:%d,%u,%s", link_index(l), (unsigned) n, to_hex(data + off, n));
   }
+#if CONFIG_MODULE_ZK
+  zk_on_data(link_index(l), data, len);
+#endif
 }
 
 static void find_relay (const uint8_t *avoid);
@@ -750,6 +753,17 @@ at_line (char *line) {
     ok();
     return;
   }
+#if CONFIG_MODULE_ZK
+  if (strcmp(name, "AT+ZKROOT") == 0 && (set || query)) {
+    zk_cmd_root(args, query);
+    return;
+  }
+  if (strcmp(name, "AT+TIME") == 0 && query) {
+    port_printf("+TIME:%llu", (unsigned long long) zk_now_ms());
+    ok();
+    return;
+  }
+#endif
   if (strcmp(name, "AT+LINKS") == 0) {
     cmd_links();
     return;

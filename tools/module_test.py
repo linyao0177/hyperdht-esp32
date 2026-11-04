@@ -36,9 +36,12 @@ def skip(name, why):
     print(f'SKIP {name}  {why}')
 
 
-def peer(*args, script='module-peer.js'):
+def peer(*args, script='module-peer.js', stdin=None):
     """Starts a Node.js test peer; returns the process."""
-    p = subprocess.Popen(['node', script, *args], cwd=HOST, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    p = subprocess.Popen(['node', script, *args], cwd=HOST, stdin=subprocess.PIPE if stdin else None, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if stdin:
+        p.stdin.write(stdin)
+        p.stdin.close()
     peers.append(p)
     return p
 
@@ -206,6 +209,34 @@ def main(port):
     m.command(f'AT+SENDT={link},pong from the host MCU')
     reply = peer_line(dialer, 'reply')
     check('peer gets the host reply', reply == 'reply pong from the host MCU', reply or 'none')
+    m.wait_event(f'+CLOSED:{link}', timeout=30)
+
+    # camera events with proofs (components/zk). The events in its test data
+    # were proven days ago, so they are STALE. With t moved to now, the proof
+    # no longer fits: INVALID, after the whole check. VALID needs a camera.
+    zk = os.path.join(os.path.dirname(__file__), '..', 'components', 'zk', 'test', 'data')
+    root = open(os.path.join(zk, 'root.hex')).read().strip()
+    event = open(os.path.join(zk, 'events.jsonl')).readline().strip()
+    check('AT+ZKROOT refuses a value >= r', errors_with(m, 'AT+ZKROOT=' + 'ff' * 32) is not None)
+    m.command('AT+ZKROOT=' + root)
+    check('AT+ZKROOT?', m.command('AT+ZKROOT?') == ['+ZKROOT:' + root])
+    now = int(m.command('AT+TIME?')[0][6:])
+    check('AT+TIME? set by SNTP', abs(now / 1000 - time.time()) < 5, f'{now / 1000 - time.time():+.2f} s from this computer')
+    fresh = json.dumps(dict(json.loads(event), t=int(time.time() * 1000)), separators=(',', ':'))
+    cases = [('not an event', 'hello', None), ('old event', event, 'STALE'), ('event changed', fresh, 'INVALID'), ('malformed event', event.replace('"conf":', '"conf":-'), 'BAD')]
+    sender = peer('send', did, stdin='\n'.join(c[1] for c in cases) + '\n')
+    link = m.wait_event('+CONN', timeout=60).split(',')[0].split(':')[1]
+    for name, text, want in cases:
+        d = m.wait_event(f'+DATA:{link},', timeout=30)
+        t = time.time()
+        try:
+            z = m.wait_event(f'+ZK:{link},', timeout=10 if want else 3)
+        except ModuleError:
+            z = None
+        got = z.split(',')[2] if z else None
+        check(f'+ZK {name}', bytes.fromhex(d.split(',')[2]).decode() == text and got == want, f'{z} in {time.time() - t:.2f} s' if z else 'no +ZK')
+        m.command(f'AT+SENDT={link},ack')
+    check('peer gets every ack', sender.stdout.read().count('PEER|reply ack') == len(cases))
     m.wait_event(f'+CLOSED:{link}', timeout=30)
 
     # allow list
@@ -376,6 +407,9 @@ def main(port):
     m.wait_event('+READY', timeout=60)
     put2 = m.wait_event('+PUT', timeout=60)
     check('identity and record survive a restart', boot2 == boot and put2.split(',')[2] == seq, f'{put2}: republished seq {seq}')
+    check('registry root survives a restart', m.command('AT+ZKROOT?') == ['+ZKROOT:' + root])
+    m.command('AT+ZKROOT=')
+    check('AT+ZKROOT= clears it', m.command('AT+ZKROOT?') == [])
     info = m.command('AT+INFO')[0]
     check('AT+INFO after restart', info.split(',')[2:6] == ['1', '1', '0', '0'], 'free heap ' + info.split(',')[-1])
 

@@ -9,7 +9,7 @@
 
 #include "hdht.h"
 
-#define MODULE_VERSION "hdht-module/0.5"
+#define MODULE_VERSION "hdht-module/0.6"
 
 extern uv_loop_t loop;
 extern hdht_t dht;
@@ -41,5 +41,23 @@ at_line (char *line);
 
 void
 at_dht_ready (void);
+
+// zk.c, with CONFIG_MODULE_ZK: camera events with proofs
+void
+zk_init (void);
+
+void
+zk_time_start (void);
+
+// a message on a link; +ZK follows if it is an event
+void
+zk_on_data (int link, const uint8_t *data, size_t len);
+
+void
+zk_cmd_root (const char *args, bool query);
+
+// unix time in ms, or 0 until SNTP has set the clock (safe from any task)
+uint64_t
+zk_now_ms (void);
 
 #endif

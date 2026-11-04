@@ -2,7 +2,7 @@
 
 [`examples/uart_module`](../examples/uart_module) turns the ESP32-C3 into a network module. A host MCU uses it the way it would use an AT-command WiFi module: one text command per line over a serial port. The module handles WiFi, its identity, peer-to-peer connections by DID, signed records and topic lookup. The host needs no network stack and no cryptography of its own.
 
-Version: `hdht-module/0.5`.
+Version: `hdht-module/0.6`.
 
 ## Wiring
 
@@ -96,6 +96,31 @@ Up to 4 links at a time, numbered 0–3.
 | `AT+RELAYONLY=1` / `AT+RELAYONLY=0` | — | 1: no holepunching next to the relay, outbound or inbound, so peers never see the module's address. Kept in NVS. Default 0 |
 | `AT+RELAYONLY?` | `+RELAYONLY:<0/1>` | |
 
+### Camera events with proofs
+
+The module can check event_v2 messages that cameras send on a link: JSON objects with a zero-knowledge proof (`"zk"`) that a registered device signed the event ([components/zk](../components/zk/README.md#event_v2)). It needs the root of the device registry. Built with `CONFIG_MODULE_ZK` (on by default).
+
+| Command | Result | |
+|---|---|---|
+| `AT+ZKROOT=<64 hex>` | — | the registry root, big-endian and below the group order. Kept in NVS. From now on every event that arrives gets a `+ZK` after its `+DATA`. The verifier needs about 2.5 s to start; events wait for it |
+| `AT+ZKROOT=` | — | stops checking |
+| `AT+ZKROOT?` | `+ZKROOT:<hex>`, or nothing | |
+| `AT+TIME?` | `+TIME:<unix ms>` | the clock, set by SNTP after WiFi comes up. 0 until then |
+
+Every message on a link that contains the key `"zk"` gets one `+ZK:<link>,<seq>,<result>` (seq is `-` if the message could not be read):
+
+| Result | |
+|---|---|
+| `VALID` | the proof fits the event and the root |
+| `INVALID` | it does not: a field was changed, or it was made for another root |
+| `REPLAY` | an event with the same M was accepted before |
+| `STALE` | `t` is more than `CONFIG_MODULE_ZK_WINDOW` seconds (default 30) from the module's clock |
+| `NOTIME` | the clock is not set yet |
+| `BAD` | not a well-formed event or proof |
+| `BUSY` | 4 events are already waiting |
+
+Each takes 1.24 s on the C3, one at a time and below the network's priority. The messages themselves still arrive as `+DATA` at once. The checks do not use the sender's DID: anyone can connect with a new key and send a copied message, which is why `t` and M are checked instead.
+
 ## Events
 
 | Event | When |
@@ -114,6 +139,7 @@ Up to 4 links at a time, numbered 0–3.
 | `+GET:<did>,<status>,<seq>,<hex>` | status 0 with the value, or -110 if not found |
 | `+LOOKUP:<topic>,<status>,<count>[,<did>...]` | up to 16 DIDs. They are hints, not proof: connect to authenticate, and check the peer's record |
 | `+ANNOUNCE:<topic>,<status>,<nodes>` / `+UNANNOUNCE:<topic>,<status>,<nodes>` | an announce or unannounce finished. Status 0 means at least one node took it |
+| `+ZK:<link>,<seq>,<result>` | an event with a proof was checked (see [Camera events with proofs](#camera-events-with-proofs)) |
 
 ## A session
 
@@ -155,5 +181,5 @@ The host is a meter. It publishes what it is, waits for its operator's app to co
 - **Retry connects, and time them out.** A connect can fail with `+CLOSED:<link>,-100` (peer not found), most often right after the peer starts, before its announcement has spread. In the test runs, 5 of 22 connects to peers started seconds earlier failed: four with -100, and one that gave no `+CONN` within 60 s. Every retry worked.
 - **Network operations take seconds.** In the test runs, a connect took about 3 s, a record put 4–10 s, and a get about 5 s. Do not block the host's main loop waiting for them.
 - **One command at a time.** Wait for `OK` or `ERROR`. The module queues up to 4 lines and answers `ERROR:busy` beyond that.
-- **The module keeps the identity, network, allow list, record, topics, relay and credential across restarts.** Listening does not persist: send `AT+LISTEN=1` after each boot.
+- **The module keeps the identity, network, allow list, record, topics, relay, credential and registry root across restarts.** Listening does not persist: send `AT+LISTEN=1` after each boot.
 - **Signing is the module's key, not the host's.** What it proves is that this module produced the signature. Data the host feeds in is only as trustworthy as the host and its wiring.

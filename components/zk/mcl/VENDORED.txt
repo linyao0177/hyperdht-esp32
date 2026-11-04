@@ -1,0 +1,12 @@
+mcl (https://github.com/herumi/mcl), BSD-3-Clause (COPYRIGHT), at commit
+9f49ba06593e2d426ab6fb9b0e17bc125a6f720c.
+
+Only the files src/fp.cpp includes are kept: the whole library, with its C
+API, builds from that one file (see ../CMakeLists.txt for the settings).
+
+One change, in include/mcl/util.hpp, after abs_(int64_t):
+
+  #if defined(__riscv) && __riscv_xlen == 32 && defined(_NEWLIB_VERSION)
+  // newlib on riscv32 has int32_t = long, so a plain int matches neither overload exactly
+  inline uint32_t abs_(int x) { return abs_(int32_t(x)); }
+  #endif

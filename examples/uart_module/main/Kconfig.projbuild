@@ -35,6 +35,26 @@ config MODULE_ISSUER
     string "Only accept manufacturer credentials from this issuer (did:mw:<hex>), empty for any"
     default ""
 
+config MODULE_ZK
+    bool "Verify camera events with zero-knowledge proofs (AT+ZKROOT)"
+    default y
+    help
+        Checks event_v2 messages that arrive on links against a registry root
+        set with AT+ZKROOT, and reports each with +ZK (docs/module-uart.md).
+        Costs about 27 KB of static RAM and 145 KB of flash, and once a root
+        is set a task with a 24 KB stack. The clock is set by SNTP.
+
+config MODULE_ZK_WINDOW
+    int "Accept events whose time is within this many seconds of the clock"
+    depends on MODULE_ZK
+    range 5 60
+    default 30
+
+config MODULE_SNTP_SERVER
+    string "SNTP server"
+    depends on MODULE_ZK
+    default "pool.ntp.org"
+
 config MODULE_BOOTSTRAP
     string "Bootstrap node (ip:port), empty for the public HyperDHT"
     default ""

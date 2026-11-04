@@ -172,6 +172,9 @@ on_net (uv_async_t *handle) {
   (void) handle;
   if (dht_started || !connected) return;
   dht_started = true;
+#if CONFIG_MODULE_ZK
+  zk_time_start();
+#endif
 
   const char *bootstrap[] = {CONFIG_MODULE_BOOTSTRAP};
   hdht_opts_t opts = {0};
@@ -223,6 +226,9 @@ hdht_task (void *arg) {
   uv_async_init(&loop, &line_async, on_lines);
   uv_async_init(&loop, &net_async, on_net);
   at_init();
+#if CONFIG_MODULE_ZK
+  zk_init();
+#endif
   port_init(on_port_line);
   port_printf("+BOOT:%s,%s", MODULE_VERSION, did);
   wifi_start();
