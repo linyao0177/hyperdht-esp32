@@ -154,6 +154,7 @@ wifi_start (void) {
   esp_wifi_set_mode(WIFI_MODE_STA);
   wifi_apply();
   esp_wifi_start();
+  esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
 // the hdht task

@@ -60,7 +60,7 @@ class Module:
         buf = b''
         while True:
             try:
-                buf += self.ser.read(256)
+                buf += self.ser.read(self.ser.in_waiting or 1)  # returns as soon as a byte is in
             except serial.SerialException:
                 time.sleep(0.5)
                 continue

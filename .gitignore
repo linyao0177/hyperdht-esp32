@@ -18,3 +18,4 @@ node_modules/
 # secure boot signing keys never belong in the repo
 secure_boot_signing_key.pem
 *.pem
+.concord/
