@@ -32,6 +32,24 @@ config MER_GATEWAY_CONTRACT
     string "EIP-712 verifyingContract (Circle Gateway)"
     default "0x0077777d7EBA4688BDeF3E311b846F25870A19B9"
 
+config MER_BUYER_DOMAIN_NAME
+    string "EIP-712 domain name the buyer signs payments under"
+    default "GatewayWalletBatched"
+    help
+        GatewayWalletBatched (version 1, verifyingContract MER_GATEWAY_CONTRACT)
+        for Circle Gateway batched settlement. For a seller that settles each
+        authorization with the token's own transferWithAuthorization, use the
+        token's domain: "USDC" / "2" on Circle's testnets, "USD₮0" / "1" on
+        Stable, with MER_BUYER_VERIFYING_CONTRACT set to the token.
+
+config MER_BUYER_DOMAIN_VERSION
+    string "EIP-712 domain version the buyer signs payments under"
+    default "1"
+
+config MER_BUYER_VERIFYING_CONTRACT
+    string "EIP-712 verifyingContract for the buyer's payments, empty for MER_GATEWAY_CONTRACT"
+    default ""
+
 config MER_TASK_STACK
     int "hdht loop task stack size"
     default 20480

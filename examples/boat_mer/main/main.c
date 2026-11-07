@@ -438,8 +438,8 @@ hdht_task (void *arg) {
   if (has_seller) {
     boat_buyer_config_t cfg = {
       .chain_id = CONFIG_MER_CHAIN_ID,
-      .domain_name = "GatewayWalletBatched",
-      .domain_version = "1",
+      .domain_name = CONFIG_MER_BUYER_DOMAIN_NAME,
+      .domain_version = CONFIG_MER_BUYER_DOMAIN_VERSION,
       .rate_ceiling_micro = 500000,  // $0.50 per kWh
       .session_cap_micro = 1000000,  // $1 per session
       .min_valid_window_secs = 3600, // 1 hour
@@ -450,7 +450,8 @@ hdht_task (void *arg) {
       .tick_ms = 1000,
       .wedge_secs = 15,
     };
-    boat_hex_to_bytes(CONFIG_MER_GATEWAY_CONTRACT, cfg.gateway_contract, 20);
+    // the buyer's own domain; anchor.c pays anchor nodes under the Gateway domain
+    boat_hex_to_bytes(CONFIG_MER_BUYER_VERIFYING_CONTRACT[0] ? CONFIG_MER_BUYER_VERIFYING_CONTRACT : CONFIG_MER_GATEWAY_CONTRACT, cfg.gateway_contract, 20);
     if (boat_buyer_init(&buyer, &kp, &xport, NULL, &cfg, &buyer_cb, NULL) != BOAT_OK) {
       printf("MER|boat_buyer_init failed\n");
       has_seller = false;

@@ -241,6 +241,10 @@ One anchor node runs on a Google Cloud e2-small in Taiwan as a systemd service f
 
 [`apps/pear-seller`](../../apps/pear-seller) is a Pear app that plays `mer-seller.js`'s part, on Bare, with [`packages/boat-peer`](../../packages/boat-peer). Set `CONFIG_MER_SELLER_KEY` to the DID it prints. In 18 paying sessions the board signed 122 authorizations and the app accepted all 122, each kept in a Hypercore of receipts that an independent script replicated and checked again. Results are in its [README](../../apps/pear-seller/README.md#results-2026-11-07-esp32-c3-and-a-mac-public-hyperdht).
 
+## Settled on-chain by a WDK account (2026-11-07)
+
+By default the board signs its payments under Circle Gateway's batched domain. With `CONFIG_MER_BUYER_DOMAIN_NAME`, `_VERSION` and `_VERIFYING_CONTRACT` set to a token's own EIP-712 domain (USDC on the Arc testnet: `USDC`, `2`, `0x3600000000000000000000000000000000000000`), each authorization can be submitted straight to the token's `transferWithAuthorization`. Payments to anchor nodes keep the Gateway domain. `apps/pear-seller --settle` did that with a WDK account: 41 of 41 settled ([results](../../apps/pear-seller/README.md#results-settled-with-wdk-2026-11-07-arc-testnet)).
+
 ## Integration notes
 
 - **Duplicate `randombytes`.** MER defines a global `randombytes()` to feed TweetNaCl, and libsodium defines one too, so linking both fails with `multiple definition of 'randombytes'`. `CMakeLists.txt` renames MER's copy inside its own component (`randombytes=boat_mer_randombytes`) without changing MER's sources. A weak symbol upstream, or building MER's Ed25519 on libsodium, would remove the need for this.

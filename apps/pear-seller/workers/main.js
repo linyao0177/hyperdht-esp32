@@ -6,7 +6,11 @@
 // for every slice it is billed. boat-peer checks each one against the device's
 // DID record. Accepted authorizations are appended to a Hypercore, so anyone
 // with its key can replicate them and check them again (verify-receipts.js).
-// With --dial, it also reads a device's attested reading by its DID.
+// The seller's wallet is a WDK (Tether's Wallet Development Kit) EVM account:
+// it signs the seller's DID record, and with --settle it submits each
+// authorization to the token's transferWithAuthorization and pays the gas
+// (wdk-protocol-boat-evm). With --dial, it also reads a device's attested
+// reading by its DID.
 
 const PearRuntime = require('pear-runtime') // pear-runtime on desktop; pear-mobile on mobile
 const Hyperswarm = require('hyperswarm')
@@ -20,7 +24,10 @@ const dir = require('bare-storage')
 const b4a = require('b4a')
 const sodium = require('sodium-universal')
 const { isBareKit } = require('which-runtime')
-const { Seller, publishRecord, resolveDid, dialReading, didOf, eth } = require('boat-peer')
+const { resolveDid, dialReading, didOf } = require('boat-peer')
+const WDK = require('@tetherto/wdk').default
+const WalletManagerEvm = require('@tetherto/wdk-wallet-evm').default
+const { registerBoat } = require('wdk-protocol-boat-evm')
 
 // mobile doesn't have the executable path (argv[0]) and the worker entry path
 // (argv[1]) in the worker's argv
@@ -35,11 +42,10 @@ const updaterConfig = {
   app: argv(5) // argv[5] is undefined in mobile
 }
 const dialDid = argv(6) || ''
+// the chain and the EIP-3009 token devices pay in, and whether to settle (bin.mjs)
+const chain = JSON.parse(argv(7) || '{}')
 
-// what devices pay for: the EIP-712 domain and token of examples/boat_mer
-const DOMAIN = { name: 'GatewayWalletBatched', version: '1', chainId: 5042002, verifyingContract: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9' }
-const TOKEN = '0x3600000000000000000000000000000000000000' // USDC on the Arc testnet
-const RATE = 250000 // micro-USDC per kWh ($0.25)
+const RATE = 250000 // micro-units of the token per kWh ($0.25)
 
 const pipe = new FramedStream(Bare.IPC)
 const say = (line) => pipe.write(line)
@@ -59,21 +65,25 @@ pear.updater.on('updated', () => say('updated'))
 pear.on('minver-required', () => say('minver-required'))
 
 // the seller's identity: an Ed25519 seed (its DID and HyperDHT key) and a
-// secp256k1 key (the wallet it is paid to), made on first start
+// WDK seed phrase (the wallet it is paid to), made on first start
 function identity () {
   const file = path.join(updaterConfig.dir, 'seller-identity.json')
-  if (!fs.existsSync(file)) {
-    const seed = b4a.alloc(32)
-    const wallet = b4a.alloc(32)
-    sodium.randombytes_buf(seed)
-    sodium.randombytes_buf(wallet)
+  let id = {}
+  if (fs.existsSync(file)) id = JSON.parse(b4a.toString(fs.readFileSync(file)))
+  if (!id.seed || !id.mnemonic) {
+    if (!id.seed) {
+      const seed = b4a.alloc(32)
+      sodium.randombytes_buf(seed)
+      id.seed = b4a.toString(seed, 'hex')
+    }
+    if (!id.mnemonic) id.mnemonic = WDK.getRandomSeedPhrase()
+    delete id.wallet // the raw key of earlier versions, before WDK
     fs.mkdirSync(updaterConfig.dir, { recursive: true })
-    fs.writeFileSync(file, JSON.stringify({ seed: b4a.toString(seed, 'hex'), wallet: b4a.toString(wallet, 'hex') }))
+    fs.writeFileSync(file, JSON.stringify(id))
   }
-  const id = JSON.parse(b4a.toString(fs.readFileSync(file)))
   const keyPair = { publicKey: b4a.alloc(32), secretKey: b4a.alloc(64) }
   sodium.crypto_sign_seed_keypair(keyPair.publicKey, keyPair.secretKey, b4a.from(id.seed, 'hex'))
-  return { keyPair, walletKey: b4a.from(id.wallet, 'hex') }
+  return { keyPair, mnemonic: id.mnemonic }
 }
 
 // simulated output: 12 W for 40 s, then 0 W for 20 s, so a device opens and
@@ -81,12 +91,18 @@ function identity () {
 const started = Date.now()
 const power = () => (Math.floor((Date.now() - started) / 1000) % 60) < 40 ? 12 : 0
 
-const totals = { verified: 0, refused: 0, micro: 0 }
+const totals = { verified: 0, refused: 0, micro: 0, settled: 0, failed: 0 }
 
 async function main () {
-  const { keyPair, walletKey } = identity()
+  const { keyPair, mnemonic } = identity()
   const did = didOf(keyPair.publicKey)
-  const payee = eth.addressOf(walletKey)
+
+  // the wallet: a WDK EVM account with the BoAT protocol
+  const wdk = new WDK(mnemonic).registerWallet('chain', WalletManagerEvm, { provider: chain.rpc, chainId: chain.chainId })
+  registerBoat(wdk, 'chain', { token: chain.token, chainId: chain.chainId, tokenName: chain.tokenName, tokenVersion: chain.tokenVersion })
+  const account = await wdk.getAccount('chain', 0)
+  const boat = account.getBoatProtocol()
+  const payee = boat.address
 
   const receipts = store.get({ name: 'receipts', valueEncoding: 'json' })
   await receipts.ready()
@@ -94,12 +110,15 @@ async function main () {
 
   // buyers dial the seller's DID; this swarm only carries MER streams
   const sellerSwarm = new Hyperswarm({ keyPair, dht: swarm.dht })
-  const seller = new Seller({ payee, domain: DOMAIN, token: TOKEN, rate: RATE, power })
+  const seller = boat.seller({ rate: RATE, power })
   sellerSwarm.on('connection', (conn) => seller.serve(conn, swarm.dht))
   await sellerSwarm.listen()
 
   say(`seller ${did}`)
-  say(`payee ${payee}`)
+  say(`payee ${payee} (WDK account), ${chain.tokenName} at ${chain.token} on chain ${chain.chainId}, settlement ${chain.settle ? 'on' : 'off'}`)
+  if (chain.settle) {
+    account.getTokenBalance(chain.token).then((b) => say(`payee balance ${b} micro-units`), (err) => say('balance check failed: ' + err.message))
+  }
   say(`receipts hypercore ${b4a.toString(receipts.key, 'hex')}, ${receipts.length} so far`)
 
   seller.on('buyer', ({ did }) => say(`buyer connected ${did.slice(0, 23)}...`))
@@ -117,17 +136,33 @@ async function main () {
     totals.verified++
     totals.micro += Number(p.authorization.value)
     const seq = receipts.length
-    await receipts.append({ t: Date.now(), seller: did, buyer: p.did, slice: p.slice, domain: DOMAIN, authorization: p.authorization })
+    await receipts.append({ t: Date.now(), seller: did, buyer: p.did, slice: p.slice, domain: boat.domain, authorization: p.authorization })
     say(`VERIFIED slice ${p.slice}: ${p.authorization.value} micro-USDC from ${p.signer}, ${p.rttMs} ms, receipt #${seq}`)
+    if (!chain.settle) return
+
+    // settle it on-chain from the WDK account, and log the transaction next to the receipt
+    const t0 = Date.now()
+    try {
+      const { hash, fee } = await boat.settle(p.authorization)
+      const r = await boat.waitForSettlement(hash)
+      if (r.ok) totals.settled++
+      else totals.failed++
+      await receipts.append({ type: 'settlement', receipt: seq, tx: hash, block: r.block, ok: r.ok, fee: String(fee) })
+      say(`${r.ok ? 'SETTLED' : 'SETTLEMENT REVERTED'} receipt #${seq} in block ${r.block}, tx ${hash}, ${Date.now() - t0} ms`)
+    } catch (err) {
+      totals.failed++
+      await receipts.append({ type: 'settlement', receipt: seq, ok: false, error: err.shortMessage || err.message })
+      say(`SETTLEMENT FAILED receipt #${seq}: ${err.shortMessage || err.message}`)
+    }
   })
 
-  const publish = () => publishRecord(swarm.dht, keyPair, walletKey).then(
+  const publish = () => boat.publishDidRecord(swarm.dht, keyPair).then(
     (r) => say(`DID record published on ${r.nodes} nodes (seq ${r.seq})`),
     (err) => say('DID record publish failed: ' + err.message))
   await publish()
   const republish = setInterval(publish, 30 * 60 * 1000)
 
-  const summary = setInterval(() => say(`summary: ${totals.verified} verified, ${totals.refused} refused, ${totals.micro} micro-USDC, ${receipts.length} receipts`), 30000)
+  const summary = setInterval(() => say(`summary: ${totals.verified} verified, ${totals.refused} refused, ${totals.micro} micro-USDC, ${totals.settled} settled, ${totals.failed} settlement failures, ${receipts.length} log entries`), 30000)
 
   // Readings are dialed from a DHT of their own: dialed from the swarm's DHT,
   // they timed out every time in this app, though the same dial from a
@@ -154,6 +189,7 @@ async function main () {
     clearInterval(dialer)
     if (readerDht) await readerDht.destroy()
     await sellerSwarm.destroy()
+    wdk.dispose()
   }, 0)
 }
 

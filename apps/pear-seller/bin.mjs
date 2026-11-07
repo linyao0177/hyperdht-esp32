@@ -15,7 +15,13 @@ const cmd = command(
   summary(pkg.description),
   flag('--storage <dir>', 'custom storage directory'),
   flag('--no-updates', 'disable OTA updates for this run'),
-  flag('--dial <did>', 'BoAT MER device to read an attested reading from, every minute')
+  flag('--dial <did>', 'BoAT MER device to read an attested reading from, every minute'),
+  flag('--settle', 'submit each payment to the token from the WDK account (pays gas)'),
+  flag('--rpc <url>', 'chain RPC (default: the Arc testnet)'),
+  flag('--chain-id <id>', 'chain id (default 5042002)'),
+  flag('--token <address>', 'EIP-3009 token devices pay in (default: USDC on the Arc testnet)'),
+  flag('--token-name <name>', "the token's EIP-712 domain name (default USDC)"),
+  flag('--token-version <version>', "the token's EIP-712 domain version (default 2)")
 )
 
 cmd.parse(Bare.argv.slice(isDev ? 2 : 1))
@@ -35,7 +41,15 @@ const app = new App({
   version: pkg.version,
   upgrade: pkg.upgrade,
   name: isWindows ? appName + '.exe' : appName,
-  dial: cmd.flags.dial
+  dial: cmd.flags.dial,
+  chain: {
+    settle: !!cmd.flags.settle,
+    rpc: cmd.flags.rpc || 'https://rpc.testnet.arc.network',
+    chainId: Number(cmd.flags.chainId || 5042002),
+    token: cmd.flags.token || '0x3600000000000000000000000000000000000000',
+    tokenName: cmd.flags.tokenName || 'USDC',
+    tokenVersion: cmd.flags.tokenVersion || '2'
+  }
 })
 
 app.on('message', (message) => console.log(message))

@@ -1,0 +1,32 @@
+{
+  "name": "wdk-protocol-boat-evm",
+  "version": "0.1.0",
+  "description": "BoAT MER devices for WDK (Wallet Development Kit) by Tether: sell to devices over Holepunch and settle their EIP-3009 payments from a WDK EVM account",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src"
+  ],
+  "scripts": {
+    "test": "node tests/run.js"
+  },
+  "dependencies": {
+    "boat-peer": "file:../boat-peer"
+  },
+  "peerDependencies": {
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.24"
+  },
+  "devDependencies": {
+    "@tetherto/wdk": "1.0.0-beta.22",
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.24",
+    "@x402/core": "2.30.0",
+    "@x402/evm": "2.30.0",
+    "bare": "1.36.2"
+  },
+  "license": "Apache-2.0"
+}

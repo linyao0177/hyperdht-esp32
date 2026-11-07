@@ -3,7 +3,7 @@ const PearRuntime = require('pear-runtime')
 const ReadyResource = require('ready-resource')
 
 module.exports = class App extends ReadyResource {
-  constructor({ dir, app, updates, version, upgrade, name, dial }) {
+  constructor({ dir, app, updates, version, upgrade, name, dial, chain }) {
     super()
 
     this.dir = dir
@@ -13,6 +13,7 @@ module.exports = class App extends ReadyResource {
     this.upgrade = upgrade
     this.name = name
     this.dial = dial
+    this.chain = chain
 
     this.IPC = null
     this.pipe = null
@@ -26,7 +27,8 @@ module.exports = class App extends ReadyResource {
       this.name,
       this.dir,
       this.app || '',
-      this.dial || ''
+      this.dial || '',
+      JSON.stringify(this.chain || {})
     ])
     this.pipe = new FramedStream(this.IPC)
 

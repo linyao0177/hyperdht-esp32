@@ -45,7 +45,7 @@ The seller's events: `buyer`, `record` (the buyer's DID record, once read), `ope
 | `signer is not the wallet in the buyer DID record` | Someone else's wallet signed |
 | `wrong payee`, `wrong amount`, `wrong slice` | The authorization does not match the bill |
 
-A `payment` that is `ok` holds the signed `authorization` (`from`, `to`, `value`, `validAfter`, `validBefore`, `nonce`, `signature`), ready to submit to the token's `transferWithAuthorization`. Settling it is the app's job.
+A `payment` that is `ok` holds the signed `authorization` (`from`, `to`, `value`, `validAfter`, `validBefore`, `nonce`, `signature`), ready to submit to the token's `transferWithAuthorization`. Settling it is the app's job; [`wdk-protocol-boat-evm`](../wdk-protocol-boat-evm) does it from a WDK account.
 
 ## Wire
 

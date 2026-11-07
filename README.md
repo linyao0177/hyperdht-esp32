@@ -181,7 +181,8 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
 | [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, open anchor nodes found by topic lookup (public testnet), nanopayments over HyperDHT |
 | [`packages/boat-peer`](packages/boat-peer) | The app side of BoAT MER for Node.js, Bare and Pear: DID records, signed readings, and a seller that checks every payment |
-| [`apps/pear-seller`](apps/pear-seller) | A Pear app that sells to `examples/boat_mer` devices and keeps the payments in a Hypercore |
+| [`packages/wdk-protocol-boat-evm`](packages/wdk-protocol-boat-evm) | BoAT MER devices for Tether's WDK: a WDK EVM account sells to devices, settles their EIP-3009 payments, and serves as an x402 facilitator |
+| [`apps/pear-seller`](apps/pear-seller) | A Pear app that sells to `examples/boat_mer` devices, settles their payments with a WDK account, and keeps the receipts in a Hypercore |
 | [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer, module test peers, credential issuer |
 | [`docs`](docs) | Architecture, protocol notes and the feasibility study |
 | [`research/phase0`](research/phase0) | The original feasibility PoC (libsodium and libudx measurements) |
