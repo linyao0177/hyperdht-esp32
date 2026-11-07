@@ -1,0 +1,84 @@
+{
+  "domain": {
+    "name": "GatewayWalletBatched",
+    "version": "1",
+    "chainId": 5042002,
+    "verifyingContract": "0x0077777d7EBA4688BDeF3E311b846F25870A19B9"
+  },
+  "messages": [
+    {
+      "key": "0xc5bbc76caa8097a67535cc0f262dcb1e45a21338e577dc5d399eee1436bc904e",
+      "address": "0xd47A7C9ffCA923529eA0829cE10Cc3413F2db7D6",
+      "message": "did:mw:14cbbc432e5f8d54ad486380f8d7fa5ca04b6287cb75c4f30a06944bb087d4fe",
+      "sig": "0xe8a8dac23b17c51e4dbf290902df5c36ce876b1a7dcf8fcd236e98d66b5af53c6f9181ea0d8b603dcff2254ea33370fcc7dfc1d6b0862681b83c5a01bf293b741b"
+    },
+    {
+      "key": "0xfc864f31b3e5f0cb6f1c7ac848bbb8ca10db60c5c78d5354c3374371b4d6864e",
+      "address": "0xD3a0B5a4baD4Ad995ED98A840A673064A4440737",
+      "message": "did:mw:7c4a14b5ff3e46edad1090929a489d88bf71d6bd18ac59d73ca3370c2c24173e",
+      "sig": "0x246a15d30f0119fa65da40a861da6613a34a6fcea76a0b24c471144e06f45daa6e38d924290f05484e2cab438a42ccec69df6c5f7018e44453d6552c5b8545d51b"
+    },
+    {
+      "key": "0x27dea62e6c305ac4c7427141cd7d69f7310447f6306a690cc2b0e734b7d9d088",
+      "address": "0x943100Ae493d1993cc3E97e61141CaD25F0E6Bdf",
+      "message": "did:mw:428fae5adf04f0ccc46bcc5b1bce8e2c9f86ba622c1e71bda9f97097feb68ecb",
+      "sig": "0xaece2a07f49ded5a3b033288831eec8f6d15ee7f5e6e7e76b45bf1c17c01a2cf58fc508e3a76d8b09903c8663173c22813aee0c626b209e8a5792efa8f0f97c21c"
+    },
+    {
+      "key": "0x8cdcaebc80c05270a710ff931bdb2bf7a8ad9a8fc69f7a31157a2125056038af",
+      "address": "0x327Ed2AA73113a90E5A5Cc498a8e8EC31d1401EE",
+      "message": "did:mw:72cfee4c85d684a1ccf41cbd4ae36fda0f8865a88cac9da514a8a0581624572f",
+      "sig": "0x82ba722711c6100aadcb02e84ce7b5a3fc2fc002b951444c8e1a11db290077e603a6506addd219e1d473683f8c37e2c157282e09149fac8c334ff2cd7bc2418e1c"
+    }
+  ],
+  "transfers": [
+    {
+      "key": "0xc5bbc76caa8097a67535cc0f262dcb1e45a21338e577dc5d399eee1436bc904e",
+      "transfer": {
+        "from": "0xd47A7C9ffCA923529eA0829cE10Cc3413F2db7D6",
+        "to": "0x130286312BA5E7d805330ADFe0059451484a17B5",
+        "value": "12345",
+        "validAfter": 0,
+        "validBefore": 1800000001,
+        "nonce": "0xdff168556c59916774da1368fbe416cf7b83c223b84d83e2a954627115391984"
+      },
+      "sig": "0x0efb9bec2c7b80ecf1ca2c81f84073bca21eca6959fbccfc3e416a900d434b455171d2638f9d31ca424467ba6c9d86a42333839386a7af84b46eebae65df985a1b"
+    },
+    {
+      "key": "0xfc864f31b3e5f0cb6f1c7ac848bbb8ca10db60c5c78d5354c3374371b4d6864e",
+      "transfer": {
+        "from": "0xD3a0B5a4baD4Ad995ED98A840A673064A4440737",
+        "to": "0x59a89b5B501F57cC3275D3AF595D80630a272809",
+        "value": "24690",
+        "validAfter": 0,
+        "validBefore": 1800000002,
+        "nonce": "0x1c898443bf6fe0e0af85aa46bc06d2dbcaec2bda2cb6087f9802854286466470"
+      },
+      "sig": "0x9b0700f8a57a7ba433bcbff9a17a0e0b72bb262caec54655e10b3baf85d8f8cf300fd78b21e708064a180fb3178778ca7fca5fced4ee135076e656428fce01ea1b"
+    },
+    {
+      "key": "0x27dea62e6c305ac4c7427141cd7d69f7310447f6306a690cc2b0e734b7d9d088",
+      "transfer": {
+        "from": "0x943100Ae493d1993cc3E97e61141CaD25F0E6Bdf",
+        "to": "0xAC7B8B072806eEff701878d911A5e8F3bab602A5",
+        "value": "37035",
+        "validAfter": 0,
+        "validBefore": 1800000003,
+        "nonce": "0x65cd2e13aef3b610b3cea877f5343804677a6e02eb0746cf0f60fbe9940e6ade"
+      },
+      "sig": "0xcad4ff8e7f4ca2abe426358a12556f13006a82c05548ac83b9fe576d48141ad54385abaf47e8d3c1c274b51ee27b44f6943c6016e8fffa28c4b40ea30c16264c1c"
+    },
+    {
+      "key": "0x8cdcaebc80c05270a710ff931bdb2bf7a8ad9a8fc69f7a31157a2125056038af",
+      "transfer": {
+        "from": "0x327Ed2AA73113a90E5A5Cc498a8e8EC31d1401EE",
+        "to": "0xf73b49313Cb2Fef56845bAcb79EDD4e14e46A192",
+        "value": "49380",
+        "validAfter": 0,
+        "validBefore": 1800000004,
+        "nonce": "0xc859ddf85e7193cef76d76fb3306494694dd4579589f6bda9a6724f660664b9a"
+      },
+      "sig": "0x0e705367d79fd491f46a7be3e1c053ad37e74133c81e11b21b92686c5055c93828a5a2a3db6c7838f9479438e2079348a07827b411020ff7da9a7b03106616aa1b"
+    }
+  ]
+}

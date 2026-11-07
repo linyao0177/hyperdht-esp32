@@ -1,0 +1,26 @@
+{
+  "name": "boat-peer",
+  "version": "0.1.0",
+  "description": "The app side of BoAT MER over Holepunch: resolve device DID records, check attested readings, and sell to BoAT MER devices for EIP-3009 payments, in Node.js, Bare and Pear",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "lib"
+  ],
+  "scripts": {
+    "test": "node test/run.js && node_modules/bare/bin/bare test/run.js"
+  },
+  "dependencies": {
+    "@noble/curves": "2.3.0",
+    "@noble/hashes": "2.3.0",
+    "b4a": "1.9.0",
+    "bare-events": "2.9.2",
+    "sodium-universal": "5.0.1"
+  },
+  "devDependencies": {
+    "bare": "1.36.2",
+    "ethers": "6.17.0",
+    "hyperdht": "6.35.0"
+  },
+  "license": "MIT"
+}

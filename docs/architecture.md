@@ -225,6 +225,8 @@ A product whose own MCU runs the application can keep its firmware and drive the
 
 Measured on the public HyperDHT: 53 + 24 payment authorizations verified with none rejected, a seller billing the wrong wallet refused 4 of 4 times, records stored on 20 of 20 nodes. Details in its [README](../examples/boat_mer/README.md).
 
+The other end can be a Pear app. [`packages/boat-peer`](../packages/boat-peer) does the app side (DID records, signed readings, a seller that checks every payment) in Node.js and Bare, and [`apps/pear-seller`](../apps/pear-seller) sells to the board from a Pear app: 122 of 122 payments accepted, kept in a Hypercore that anyone can replicate and check.
+
 ## Footprint
 
 ESP32-C3 at 160 MHz, from [`examples/hyperdht_demo`](../examples/hyperdht_demo/README.md) and [`examples/boat_mer`](../examples/boat_mer/README.md):
@@ -255,7 +257,6 @@ Known limits today, roughly in order of impact for products:
 | Key protection not run on a chip | Secure boot, flash and NVS encryption are configured and build ([key-protection.md](key-protection.md)) but burn eFuses, so they have not been tried | Run on spare boards, including signed OTA |
 | No key rotation | A new key is a new DID | A signed "moved to" record, or controller keys in the DID record |
 | No listing | The DHT looks up by key only | An indexer over records, e.g. a Hypercore/Hyperbee log written by the issuer |
-| Untested inside a Pear app | Hyperswarm on Node.js works both ways ([results](../examples/uart_module/README.md#hyperswarm-2026-11-07-firmware-061)); Pear runs the same module on Bare | Run the same test from a Pear app |
 | Server power | Relay pings every 3 s keep WiFi on | Client role for battery devices, or longer intervals with slower failover |
 | ESP32-C3 only | Other chips untested | Port to other ESP32 variants |
 | No Protomux, IPv6, immutable records | Fewer protocol features than hyperdht | Add as products need them |

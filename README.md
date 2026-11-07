@@ -2,7 +2,7 @@
 
 **[HyperDHT](https://github.com/holepunchto/hyperdht) for microcontrollers.** A C implementation of the Holepunch peer-to-peer networking core for the ESP32-C3. It lets a device reach, and be reached by, any HyperDHT peer by **public key**, through NATs, **end-to-end encrypted**, with no server of your own.
 
-It speaks the hyperdht 6.x wire protocol byte for byte, so the other end can be an unmodified Node.js `hyperdht` app. Hyperswarm apps dial the device with `swarm.joinPeer(publicKey)`, and the device finds and connects to Hyperswarm servers by topic (tested with Hyperswarm on Node.js; Pear apps use the same module). A device can also open the same encrypted channel over **Bluetooth LE** with the same key, when there is no internet.
+It speaks the hyperdht 6.x wire protocol byte for byte, so the other end can be an unmodified Node.js `hyperdht` app. Hyperswarm apps dial the device with `swarm.joinPeer(publicKey)`, and the device finds and connects to Hyperswarm servers by topic (tested with Hyperswarm on Node.js, and with a Pear app on Bare). A device can also open the same encrypted channel over **Bluetooth LE** with the same key, when there is no internet.
 
 > **Status: experimental.** Both the client and the server work on real hardware: on the public DHT, through home routers, and across a carrier NAT. The API may still change, and some hyperdht features are missing (see [Limitations](#limitations)).
 
@@ -180,6 +180,8 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`examples/hyperdht_demo`](examples/hyperdht_demo) | Test firmware: client rounds, then server; optional BLE |
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
 | [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, open anchor nodes found by topic lookup (public testnet), nanopayments over HyperDHT |
+| [`packages/boat-peer`](packages/boat-peer) | The app side of BoAT MER for Node.js, Bare and Pear: DID records, signed readings, and a seller that checks every payment |
+| [`apps/pear-seller`](apps/pear-seller) | A Pear app that sells to `examples/boat_mer` devices and keeps the payments in a Hypercore |
 | [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer, module test peers, credential issuer |
 | [`docs`](docs) | Architecture, protocol notes and the feasibility study |
 | [`research/phase0`](research/phase0) | The original feasibility PoC (libsodium and libudx measurements) |

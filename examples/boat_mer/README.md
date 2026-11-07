@@ -237,6 +237,10 @@ One anchor node runs on a Google Cloud e2-small in Taiwan as a systemd service f
 | Independent verification | `anchor-verify.js` from the two DIDs only: 6 of 6 leaves pass (the board kept submitting), log replicated in 3.3 s |
 | Free heap | ~140.5 KB steady |
 
+## With a Pear app as the seller (2026-11-07)
+
+[`apps/pear-seller`](../../apps/pear-seller) is a Pear app that plays `mer-seller.js`'s part, on Bare, with [`packages/boat-peer`](../../packages/boat-peer). Set `CONFIG_MER_SELLER_KEY` to the DID it prints. In 18 paying sessions the board signed 122 authorizations and the app accepted all 122, each kept in a Hypercore of receipts that an independent script replicated and checked again. Results are in its [README](../../apps/pear-seller/README.md#results-2026-11-07-esp32-c3-and-a-mac-public-hyperdht).
+
 ## Integration notes
 
 - **Duplicate `randombytes`.** MER defines a global `randombytes()` to feed TweetNaCl, and libsodium defines one too, so linking both fails with `multiple definition of 'randombytes'`. `CMakeLists.txt` renames MER's copy inside its own component (`randombytes=boat_mer_randombytes`) without changing MER's sources. A weak symbol upstream, or building MER's Ed25519 on libsodium, would remove the need for this.
