@@ -35,6 +35,7 @@ char did[72];
 static QueueHandle_t lines;
 static uv_async_t line_async, net_async;
 static bool dht_started;
+static uint8_t seed[32];  // kept until hdht_init, so outbound links use the DID too
 
 static char ssid[33];
 static char ip[16];
@@ -45,7 +46,6 @@ static volatile bool connected;
 static void
 load_identity (void) {
   nvs_handle_t nvs;
-  uint8_t seed[32];
   size_t len = 32;
   ESP_ERROR_CHECK(nvs_open("module", NVS_READWRITE, &nvs));
   if (nvs_get_blob(nvs, "seed", seed, &len) != ESP_OK) {
@@ -55,7 +55,6 @@ load_identity (void) {
   }
   nvs_close(nvs);
   hdht_keypair(pk, sk, seed);
-  sodium_memzero(seed, sizeof(seed));
 
   char hex[65];
   sodium_bin2hex(hex, sizeof(hex), pk, 32);
@@ -177,12 +176,14 @@ on_net (uv_async_t *handle) {
 #endif
 
   const char *bootstrap[] = {CONFIG_MODULE_BOOTSTRAP};
-  hdht_opts_t opts = {0};
+  hdht_opts_t opts = {.seed = seed};
   if (CONFIG_MODULE_BOOTSTRAP[0]) {
     opts.bootstrap = bootstrap;
     opts.bootstrap_len = 1;
   }
-  if (hdht_init(&dht, &loop, &opts) != 0) {
+  int err = hdht_init(&dht, &loop, &opts);
+  sodium_memzero(seed, sizeof(seed));
+  if (err != 0) {
     port_line("+READY:ERROR");
     return;
   }

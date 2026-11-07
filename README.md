@@ -2,7 +2,7 @@
 
 **[HyperDHT](https://github.com/holepunchto/hyperdht) for microcontrollers.** A C implementation of the Holepunch peer-to-peer networking core for the ESP32-C3. It lets a device reach, and be reached by, any HyperDHT peer by **public key**, through NATs, **end-to-end encrypted**, with no server of your own.
 
-It speaks the hyperdht 6.x wire protocol byte for byte, so the other end can be an unmodified Node.js `hyperdht` app. Hyperswarm and Pear apps should be able to dial the device with `swarm.joinPeer(publicKey)`, which uses the same connect path; that is not tested yet. A device can also open the same encrypted channel over **Bluetooth LE** with the same key, when there is no internet.
+It speaks the hyperdht 6.x wire protocol byte for byte, so the other end can be an unmodified Node.js `hyperdht` app. Hyperswarm apps dial the device with `swarm.joinPeer(publicKey)`, and the device finds and connects to Hyperswarm servers by topic (tested with Hyperswarm on Node.js; Pear apps use the same module). A device can also open the same encrypted channel over **Bluetooth LE** with the same key, when there is no internet.
 
 > **Status: experimental.** Both the client and the server work on real hardware: on the public DHT, through home routers, and across a carrier NAT. The API may still change, and some hyperdht features are missing (see [Limitations](#limitations)).
 
@@ -144,7 +144,7 @@ The Holepunch stack, and what this project implements:
 | Layer | Holepunch (JS) | hyperdht-esp32 |
 |---|---|---|
 | Apps, storage | Pear, Hypercore, Autobase | out of scope |
-| Discovery by topic | Hyperswarm | not yet; peers dial the device by key |
+| Discovery by topic | Hyperswarm | **reimplemented in C**: lookup and announce, so the device finds Hyperswarm servers and they find it |
 | Peer connections | hyperdht | **reimplemented in C** (`components/hdht`) |
 | DHT RPC | dht-rpc | **reimplemented in C** |
 | Encryption | Noise IK/XX, SecretStream | **reimplemented in C** on libsodium |

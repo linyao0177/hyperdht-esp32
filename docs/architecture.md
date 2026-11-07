@@ -255,7 +255,7 @@ Known limits today, roughly in order of impact for products:
 | Key protection not run on a chip | Secure boot, flash and NVS encryption are configured and build ([key-protection.md](key-protection.md)) but burn eFuses, so they have not been tried | Run on spare boards, including signed OTA |
 | No key rotation | A new key is a new DID | A signed "moved to" record, or controller keys in the DID record |
 | No listing | The DHT looks up by key only | An indexer over records, e.g. a Hypercore/Hyperbee log written by the issuer |
-| Untested with Pear/Hyperswarm apps | Expected to work through `swarm.joinPeer(publicKey)`, which uses the same connect path | Test and document |
+| Untested inside a Pear app | Hyperswarm on Node.js works both ways ([results](../examples/uart_module/README.md#hyperswarm-2026-11-07-firmware-061)); Pear runs the same module on Bare | Run the same test from a Pear app |
 | Server power | Relay pings every 3 s keep WiFi on | Client role for battery devices, or longer intervals with slower failover |
 | ESP32-C3 only | Other chips untested | Port to other ESP32 variants |
 | No Protomux, IPv6, immutable records | Fewer protocol features than hyperdht | Add as products need them |

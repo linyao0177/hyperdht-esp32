@@ -11,7 +11,7 @@ The command reference is [docs/module-uart.md](../../docs/module-uart.md).
 | [`main/at.c`](main/at.c) | The commands and events |
 | [`main/zk.c`](main/zk.c) | Checks camera events with proofs (`AT+ZKROOT`, `+ZK`) on a task of its own, with the time window and replay check. [`main/zk_vk.h`](main/zk_vk.h) is the event_v2 circuit's verifying key, made with [`components/zk/gen/vk_header.py`](../../components/zk/gen/vk_header.py) |
 | [`tools/module_host.py`](../../tools/module_host.py) | A host on a computer: an interactive terminal, and the library the test uses. Read it as a reference for a host MCU's driver: send a line, collect result lines until `OK` or `ERROR`, and take everything else starting with `+` as an event |
-| [`tools/module_test.py`](../../tools/module_test.py) | End-to-end test: the computer is the host MCU, and Node.js peers ([`tools/host/module-peer.js`](../../tools/host/module-peer.js)) are the network |
+| [`tools/module_test.py`](../../tools/module_test.py) | End-to-end test: the computer is the host MCU, and Node.js peers ([`tools/host/module-peer.js`](../../tools/host/module-peer.js), and Hyperswarm in [`tools/host/swarm-peer.js`](../../tools/host/swarm-peer.js)) are the network |
 
 ## Run it
 
@@ -95,8 +95,22 @@ A reCamera on the same LAN connected to the module by DID, over a direct link, a
 
 The camera's proving key stays with the camera team, so `module_test.py` checks the module with old events and changed ones (`STALE`, `INVALID`, `BAD`). `VALID` and `REPLAY` need a camera, or that key.
 
+## Hyperswarm (2026-11-07, firmware 0.6.1)
+
+Hyperswarm is the module Pear apps use to find and connect to peers. These runs used Hyperswarm 4.17.2 on Node.js ([`tools/host/swarm-peer.js`](../../tools/host/swarm-peer.js)), on the public HyperDHT, with the computer and the module behind the same router. The 5-round runs were on 0.6, before the fix below; `module_test.py` ran on 0.6.1.
+
+| | Result |
+|---|---|
+| A swarm dials the module with `swarm.joinPeer(did key)` | 5 of 5, then `leavePeer` each time. The connection opened in 0.83–2.4 s, and once in 10.7 s. The host's reply came back in 24–51 ms. The swarm saw the module's DID as the remote key |
+| The module finds a Hyperswarm server by topic | `AT+LOOKUP` found the key a server joined under (`swarm.join(topic, {server: true})`) in 4.0 s |
+| The module connects to that server | 5 of 5 with `AT+CONNECT`, in 1.2–2.4 s, echo in 11–22 ms. On 0.6 the swarm saw a random key; on 0.6.1 it saw the module's DID |
+| `module_test.py` | 70 of 70, including these three cases. The relay-to-direct case was skipped again, because holepunching beat the relay |
+
+The first test run found a gap: before 0.6.1, the module dialed out with a random key made at each boot, so the peer could not tell which module was connecting. Outbound links now use the module's DID key, as Hyperswarm does with its own key pair.
+
 ## Not covered yet
 
+- **A Pear app.** Pear runs the same Hyperswarm module on the Bare runtime. The test above used Node.js.
 - **A real host MCU on UART1.** UART1 builds, but the test ran over USB Serial/JTAG. The two ports share all code above the read and write calls.
 - **`AT+WIFI` to a working network other than the default**, which would need its password in the test.
 - **Anchoring and payments.** [`examples/boat_mer`](../boat_mer) does them in firmware; they are not commands yet.

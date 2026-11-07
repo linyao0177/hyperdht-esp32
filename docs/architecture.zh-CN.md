@@ -260,7 +260,7 @@ DHT 不负责准入。任何密钥都能加入网络、宣告自己、发布记�
 | 密钥保护没在芯片上跑过 | 安全启动、flash 加密和 NVS 加密已配置并能编译（[key-protection.md](key-protection.md)），但会烧录 eFuse，所以还没试 | 在备用板上跑一遍，包括签名的 OTA 升级 |
 | 不支持密钥轮换 | 换密钥就换了 DID | 签名的“迁移到”记录，或在 DID 记录里加入 controller 密钥 |
 | 不能列出设备 | DHT 只能按公钥查 | 在记录之上建索引，例如由发行方写入的 Hypercore/Hyperbee 日志 |
-| 未与 Pear/Hyperswarm 应用实测 | 预计可以通过 `swarm.joinPeer(publicKey)` 连接，它走的是同一条连接路径 | 测试并写入文档 |
+| 未在 Pear 应用里实测 | Node.js 上的 Hyperswarm 双向都已测通（[结果](../examples/uart_module/README.md#hyperswarm-2026-11-07-firmware-061)）；Pear 在 Bare 上运行同一个模块 | 在 Pear 应用里跑同样的测试 |
 | 服务端功耗 | 每 3 秒的中继 ping 让 WiFi 一直开着 | 电池设备用客户端角色，或拉长间隔、接受更慢的故障切换 |
 | 只支持 ESP32-C3 | 其他芯片未测试 | 移植到其他 ESP32 型号 |
 | 缺少 Protomux、IPv6、immutable 记录 | 协议功能少于 hyperdht | 按产品需要逐步补齐 |

@@ -2,7 +2,7 @@
 
 [`examples/uart_module`](../examples/uart_module) turns the ESP32-C3 into a network module. A host MCU uses it the way it would use an AT-command WiFi module: one text command per line over a serial port. The module handles WiFi, its identity, peer-to-peer connections by DID, signed records and topic lookup. The host needs no network stack and no cryptography of its own.
 
-Version: `hdht-module/0.6`.
+Version: `hdht-module/0.6.1`.
 
 ## Wiring
 
@@ -64,7 +64,7 @@ Up to 4 links at a time, numbered 0–3.
 
 | Command | Result | |
 |---|---|---|
-| `AT+CONNECT=<did>` | `+CONNECT:<link>` | **DHT**. Then `+CONN` or `+CLOSED` for that link |
+| `AT+CONNECT=<did>` | `+CONNECT:<link>` | **DHT**. Then `+CONN` or `+CLOSED` for that link. The peer sees the module's own DID (before 0.6.1, a random key that changed at each boot) |
 | `AT+LISTEN=1` / `AT+LISTEN=0` | — | accept connections / stop. A `LISTEN=1` sent before `+READY` takes effect once ready |
 | `AT+LISTEN?` | `+LISTEN:<0/1>` | |
 | `AT+ALLOW=<did>` | — | adds to the allow list (up to 8, kept in NVS). While the list is not empty, only peers on it can connect |

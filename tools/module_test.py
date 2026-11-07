@@ -166,6 +166,8 @@ def main(port):
     # outbound connection
     link, conn, took, retries = connect(m, server_did)
     check('AT+CONNECT', conn == f'+CONN:{link},{server_did},OUT', f'{took:.1f} s, {retries} retries')
+    seen = peer_line(server, 'connection from')
+    check('the server sees the module\'s DID', seen == f'connection from {did}', seen)
     payload = bytes(range(256)) * 2
     m.command(f'AT+SEND={link},{payload.hex()}')
     echoed = b''
@@ -209,6 +211,28 @@ def main(port):
     m.command(f'AT+SENDT={link},pong from the host MCU')
     reply = peer_line(dialer, 'reply')
     check('peer gets the host reply', reply == 'reply pong from the host MCU', reply or 'none')
+    m.wait_event(f'+CLOSED:{link}', timeout=30)
+
+    # Hyperswarm, which Pear apps use: a swarm dials the module with joinPeer,
+    # and the module finds a swarm server by topic and connects to it
+    dialer = peer('dial', did, 'ping from hyperswarm', script='swarm-peer.js')
+    link = m.wait_event('+CONN', timeout=60).split(',')[0].split(':')[1]
+    d = m.wait_event(f'+DATA:{link},', timeout=30)
+    m.command(f'AT+SENDT={link},pong to hyperswarm')
+    reply = peer_line(dialer, 'round 0')
+    check('Hyperswarm joinPeer reaches the module', bytes.fromhex(d.split(',')[2]) == b'ping from hyperswarm' and reply is not None and 'reply "pong to hyperswarm"' in reply and 'key=ok' in reply, reply.split(' rtt=')[0] if reply else 'no reply')
+    m.wait_event(f'+CLOSED:{link}', timeout=30)
+    server = peer('serve', 'uart-module-test-swarm', script='swarm-peer.js')
+    swarm_did, topic = peer_line(server, 'did:mw:').split(' topic=')
+    m.command('AT+LOOKUP=' + topic)
+    lk = m.wait_event('+LOOKUP', timeout=60, match=lambda x: topic in x)
+    check('AT+LOOKUP finds a Hyperswarm server', swarm_did in lk)
+    link, _, took, retries = connect(m, swarm_did)
+    seen = peer_line(server, 'connection from')
+    m.command(f'AT+SENDT={link},hello hyperswarm')
+    d = m.wait_event(f'+DATA:{link},', timeout=30)
+    check('AT+CONNECT to a Hyperswarm server', bytes.fromhex(d.split(',')[2]) == b'hello hyperswarm' and seen == f'connection from {did} client=false', f'{took:.1f} s, {retries} retries')
+    m.command(f'AT+CLOSE={link}')
     m.wait_event(f'+CLOSED:{link}', timeout=30)
 
     # camera events with proofs (components/zk). The events in its test data
