@@ -24,7 +24,7 @@ const dir = require('bare-storage')
 const b4a = require('b4a')
 const sodium = require('sodium-universal')
 const { isBareKit } = require('which-runtime')
-const { resolveDid, dialReading, didOf } = require('boat-peer')
+const { resolveDid, dialReading, didOf, signRecordVersion } = require('boat-peer')
 const WDK = require('@tetherto/wdk').default
 const WalletManagerEvm = require('@tetherto/wdk-wallet-evm').default
 const { registerBoat } = require('wdk-protocol-boat-evm')
@@ -156,17 +156,29 @@ async function main () {
     }
   })
 
-  const publish = () => boat.publishDidRecord(swarm.dht, keyPair).then(
-    (r) => say(`DID record published on ${r.nodes} nodes (seq ${r.seq})`),
-    (err) => say('DID record publish failed: ' + err.message))
+  // the last DID record version in the log; a changed record (a new wallet)
+  // is appended, signed by the DID key, so receipts paid to an earlier wallet
+  // stay provable after the DHT only holds the new one
+  let logged = null
+  for (let i = receipts.length - 1; i >= 0 && logged === null; i--) {
+    const e = await receipts.get(i)
+    if (e.type === 'did-record' && e.did === did) logged = JSON.stringify(e.record)
+  }
+  const publish = () => boat.publishDidRecord(swarm.dht, keyPair).then(async (r) => {
+    say(`DID record published on ${r.nodes} nodes (seq ${r.seq})`)
+    if (JSON.stringify(r.record) === logged) return
+    await receipts.append({ type: 'did-record', did, ...signRecordVersion(keyPair, r.record, r.seq) })
+    logged = JSON.stringify(r.record)
+    say(`DID record version logged, wallet ${r.record.eth}`)
+  }, (err) => say('DID record publish failed: ' + err.message))
   await publish()
   const republish = setInterval(publish, 30 * 60 * 1000)
 
   const summary = setInterval(() => say(`summary: ${totals.verified} verified, ${totals.refused} refused, ${totals.micro} micro-USDC, ${totals.settled} settled, ${totals.failed} settlement failures, ${receipts.length} log entries`), 30000)
 
-  // Readings are dialed from a DHT of their own: dialed from the swarm's DHT,
-  // they timed out every time in this app, though the same dial from a
-  // swarm's DHT works in a script (not understood yet)
+  // Readings are dialed from a DHT of their own. On 2026-11-07 dials from the
+  // swarm's DHT timed out 6 of 6 times in this app; later the same code passed
+  // 5 of 5 with hyperdht 6.35.0 and 6.36.0, and the cause was never found
   let dialer = null
   let readerDht = null
   if (dialDid) {

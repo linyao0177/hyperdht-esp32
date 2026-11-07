@@ -12,7 +12,7 @@ const os = require('os')
 const path = require('path')
 const Hyperswarm = require('hyperswarm')
 const Corestore = require('corestore')
-const { eth, resolveDid } = require('boat-peer')
+const { eth, resolveDid, verifyRecordVersion } = require('boat-peer')
 
 const rpcAt = process.argv.indexOf('--rpc')
 const rpc = rpcAt > 0 ? process.argv[rpcAt + 1] : null
@@ -56,6 +56,10 @@ async function main () {
   const settlements = new Map() // receipt index -> settlement entry
   for (const e of entries) if (e.type === 'settlement') settlements.set(e.receipt, e)
 
+  // the seller's DID record as the log last recorded it, when the log keeps
+  // signed versions; otherwise the record now in the DHT
+  const logged = new Map() // did -> wallet
+  let versions = 0
   const nonces = new Set()
   let receipts = 0
   let good = 0
@@ -65,6 +69,16 @@ async function main () {
   for (let i = 0; i < length; i++) {
     const r = entries[i]
     if (r.type === 'settlement') continue
+    if (r.type === 'did-record') {
+      const rec = verifyRecordVersion(r.did, r)
+      if (rec) {
+        logged.set(r.did, rec.eth.toLowerCase())
+        versions++
+      } else {
+        console.log(`VERIFY|entry #${i}: a DID record version that does not verify`)
+      }
+      continue
+    }
     receipts++
     const a = r.authorization
     let problem = null
@@ -72,7 +86,9 @@ async function main () {
       const signer = eth.verifyTransfer(r.domain, a, a.signature).toLowerCase()
       if (signer !== a.from.toLowerCase()) problem = 'signer is not from'
       else if (signer !== await walletOf(r.buyer)) problem = 'signer is not the buyer DID wallet'
-      else if (a.to.toLowerCase() !== await walletOf(r.seller)) problem = "payee is not the wallet in the seller's current DID record"
+      else if (logged.has(r.seller) ? a.to.toLowerCase() !== logged.get(r.seller) : a.to.toLowerCase() !== await walletOf(r.seller)) {
+        problem = logged.has(r.seller) ? "payee is not the wallet in the seller's DID record logged before it" : "payee is not the wallet in the seller's current DID record (the log has no earlier version)"
+      }
       else if (nonces.has(a.nonce)) problem = 'nonce used twice'
     } catch (err) {
       problem = 'malformed: ' + err.message
@@ -91,7 +107,7 @@ async function main () {
       else console.log(`VERIFY|receipt #${i}: the log says settled in ${s.tx}, but the token has not used the authorization`)
     }
   }
-  console.log(`VERIFY|${good} of ${receipts} receipts valid, ${micro} micro-USDC, ${records.size} DID records read`)
+  console.log(`VERIFY|${good} of ${receipts} receipts valid, ${micro} micro-USDC, ${records.size} DID records read, ${versions} logged DID record versions`)
   if (claimed) console.log(`VERIFY|${claimed} logged as settled${rpc ? `, ${onChain} of them used on-chain` : ' (add --rpc to check on-chain)'}`)
   await swarm.destroy()
   await store.close()

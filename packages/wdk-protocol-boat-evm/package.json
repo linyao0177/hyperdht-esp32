@@ -26,7 +26,8 @@
     "@tetherto/wdk-wallet-evm": "1.0.0-beta.24",
     "@x402/core": "2.30.0",
     "@x402/evm": "2.30.0",
-    "bare": "1.36.2"
+    "bare": "1.36.2",
+    "hyperdht": "6.35.0"
   },
   "license": "Apache-2.0"
 }

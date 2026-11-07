@@ -11,6 +11,8 @@
 //   for it on the device. Nothing is settled here; the seller only verifies.
 // - Anchoring (CONFIG_MER_ANCHOR_NODES): signed readings go to several open
 //   anchor nodes instead of one HashAnchor server; see anchor.c.
+// - Signer (CONFIG_MER_OWNER_KEY): the owner's wallet app connects by DID and
+//   has the device sign for it; the key never leaves the device. See signer.c.
 // - DID record: the device publishes {"v":1,"did","eth","eth_sig"} as a
 //   HyperDHT mutable record under its DID key. eth_sig is an EIP-191 signature
 //   of the DID by the device's secp256k1 key, so the record binds the DID and
@@ -198,6 +200,10 @@ on_peer_connection (hdht_server_t *s, hdht_stream_t *stream) {
   char hex[65];
   sodium_bin2hex(hex, sizeof(hex), stream->remote_public_key, 32);
   printf("MER|peer did:mw:%.16s... from %s\n", hex, hdht_addr_str(&stream->remote_addr));
+  if (signer_is_owner(stream->remote_public_key)) {
+    signer_serve(stream); // the owner's wallet app: signing requests, not a reading
+    return;
+  }
   stream->on_close = on_peer_close;
 
   unsigned long long uptime = esp_timer_get_time() / 1000000;
@@ -433,11 +439,12 @@ hdht_task (void *arg) {
   printf("MER|keycheck same_keypair=%s\n", memcmp(pk, kp.ed25519_pk, 32) == 0 && memcmp(sk, kp.ed25519_sk, 64) == 0 ? "yes" : "no");
   sodium_memzero(sk, sizeof(sk));
   build_record();
+  signer_init();
 
   has_seller = sodium_hex2bin(seller_key, 32, CONFIG_MER_SELLER_KEY, strlen(CONFIG_MER_SELLER_KEY), NULL, NULL, NULL) == 0 && strlen(CONFIG_MER_SELLER_KEY) == 64;
   if (has_seller) {
     boat_buyer_config_t cfg = {
-      .chain_id = CONFIG_MER_CHAIN_ID,
+      .chain_id = CONFIG_MER_BUYER_CHAIN_ID ? CONFIG_MER_BUYER_CHAIN_ID : CONFIG_MER_CHAIN_ID,
       .domain_name = CONFIG_MER_BUYER_DOMAIN_NAME,
       .domain_version = CONFIG_MER_BUYER_DOMAIN_VERSION,
       .rate_ceiling_micro = 500000,  // $0.50 per kWh
@@ -503,4 +510,5 @@ app_main (void) {
   ESP_ERROR_CHECK(example_connect());
 
   xTaskCreate(hdht_task, "hdht", CONFIG_MER_TASK_STACK, NULL, 5, NULL);
+  x402_start();
 }

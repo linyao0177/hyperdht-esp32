@@ -10,7 +10,7 @@
 const b4a = require('b4a')
 const sodium = require('sodium-universal')
 const EventEmitter = require('bare-events')
-const { eth, didOf, makeRecord, verifyRecord, verifyReading, sha256, Seller, frame, OP, CHR } = require('..')
+const { eth, didOf, makeRecord, verifyRecord, verifyReading, sha256, Seller, frame, OP, CHR, signRecordVersion, verifyRecordVersion } = require('..')
 const vectors = require('./vectors.json')
 
 const runtime = typeof Bare !== 'undefined' ? 'bare' : 'node' // eslint-disable-line no-undef
@@ -66,6 +66,13 @@ async function main () {
   check('DID record under another key is refused', verifyRecord(ed25519(2).publicKey, value) === null)
   const otherWallet = { ...record, eth: vectors.messages[1].address }
   check('DID record claiming another wallet is refused', verifyRecord(device.publicKey, b4a.from(JSON.stringify(otherWallet))) === null)
+
+  // DID record versions, kept in a log
+  const version = signRecordVersion(device, record, 7)
+  check('record version verifies', verifyRecordVersion(record.did, version) !== null)
+  check('record version with another seq is refused', verifyRecordVersion(record.did, { ...version, seq: 8 }) === null)
+  check('record version signed by another key is refused', verifyRecordVersion(record.did, signRecordVersion(ed25519(2), record, 7)) === null)
+  check('record version claiming another wallet is refused', verifyRecordVersion(record.did, signRecordVersion(device, otherWallet, 7)) === null)
 
   // attested readings, made the way the device makes them
   const payload = JSON.stringify({ power_w: 12.0, t: 1793720788 })

@@ -58,7 +58,7 @@ The app ran on Bare 1.36 on a Mac, and the board ran `examples/boat_mer`, on the
 | Receipts | `verify-receipts.js` on the same Mac, with a store of its own, replicated the log from the app over Hyperswarm (114 receipts in 21 s) and found 114 of 114 valid, 441 micro-USDC, against both DID records read from the DHT |
 | Signed reading by DID | 3 of 3, opened in 0.87–1.55 s, every check passed |
 
-One problem is not understood yet. Dialed from the swarm's own DHT in this app, the reading timed out 6 times out of 6 (`connection timed out`). The same dial passed from a script in every set-up tried: Node.js and Bare, a plain HyperDHT and a Hyperswarm's, with a seller swarm on the same DHT that the board was paying, after joining a topic as a server, and inside a `bare-worker` thread. The app now dials readings from a HyperDHT of its own, which passed 3 of 3.
+One problem was never explained. Dialed from the swarm's own DHT in this app, the reading timed out 6 times out of 6 (`connection timed out`). The same dial passed from a script in every set-up tried: Node.js and Bare, a plain HyperDHT and a Hyperswarm's, with a seller swarm on the same DHT that the board was paying, after joining a topic as a server, and inside a `bare-worker` thread. The app now dials readings from a HyperDHT of its own, which passed 3 of 3. Later the same day the app's original code (dialing from the swarm's DHT) passed 2 of 2 with hyperdht 6.35.0 and 3 of 3 with 6.36.0, the version of the failing runs, so it is neither the version nor the app's structure. The board had anchoring on during the failing runs and off during the later ones; that is the one difference left.
 
 ## Results: settled with WDK (2026-11-07, Arc testnet)
 
@@ -72,7 +72,19 @@ Same board and app, with `--settle`: the board signed under USDC's own domain on
 | Signed readings by DID | 5 of 5 during the run |
 | Cost | About 2,180 micro-USDC of gas per settlement, for slices of 3–4 micro-USDC. Settling slice by slice is for the demo; see [wdk-protocol-boat-evm](../../packages/wdk-protocol-boat-evm/README.md#results-2026-11-07-arc-testnet-usdc) |
 
-The 122 receipts from before the switch to WDK now fail `verify-receipts.js` with "payee is not the wallet in the seller's current DID record". They were paid to the app's earlier wallet, and a DHT record keeps only its latest version, so a seller that changes wallets can no longer prove its old payees from the record. Keeping each record version in the receipts log would fix that.
+The 122 receipts from before the switch to WDK fail `verify-receipts.js`: they were paid to the app's earlier wallet, and a DHT record keeps only its latest version, so the record can no longer prove that payee.
+
+## DID record versions in the log (2026-11-07)
+
+Since then the app appends each new version of its DID record to the receipts log, signed by its DID key (boat-peer's `signRecordVersion`), whenever the record changes. `verify-receipts.js` checks every receipt against the version logged before it, and falls back to the DHT only when the log has none.
+
+To test it, the seller took payments from the board with its WDK wallet, then switched to a new seed phrase and took more, then switched back:
+
+| | Result |
+|---|---|
+| 12 receipts paid to the first wallet | Valid, against the version logged before them, though the DHT then named the second wallet |
+| 11 receipts paid to the second wallet | Valid, against its own version |
+| 175 receipts from before versions were logged | Refused, with "the log has no earlier version" |
 
 ## Files
 

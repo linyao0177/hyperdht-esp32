@@ -8,6 +8,7 @@
 // wallet claims the DID). Checking one needs the DID and nothing else.
 
 const b4a = require('b4a')
+const sodium = require('sodium-universal')
 const eth = require('./eth')
 
 const didOf = (publicKey) => 'did:mw:' + b4a.toString(publicKey, 'hex')
@@ -49,4 +50,30 @@ async function publishRecord (dht, keyPair, ethPrivateKey, { seq = Math.floor(Da
   return { record, seq, nodes: put.closestNodes.length }
 }
 
-module.exports = { didOf, keyOf, makeRecord, verifyRecord, resolveDid, publishRecord }
+// A DID record version kept outside the DHT, which stores only the latest:
+// the record, its seq, and the DID key's Ed25519 signature over both. A log
+// that keeps these (apps/pear-seller's receipts) can still prove which wallet
+// a DID named when, after the DID moves to another wallet.
+function recordMessage (seq, record) {
+  return b4a.from('boat-did-record\0' + String(seq) + '\0' + JSON.stringify(record))
+}
+
+function signRecordVersion (keyPair, record, seq) {
+  const sig = b4a.alloc(64)
+  sodium.crypto_sign_detached(sig, recordMessage(seq, record), keyPair.secretKey)
+  return { seq, record, sig: b4a.toString(sig, 'hex') }
+}
+
+// the record if the version is signed by the DID's key and the record itself is valid, else null
+function verifyRecordVersion (did, version) {
+  try {
+    const publicKey = keyOf(did)
+    const sig = b4a.from(String(version.sig), 'hex')
+    if (sig.length !== 64 || !sodium.crypto_sign_verify_detached(sig, recordMessage(version.seq, version.record), publicKey)) return null
+    return verifyRecord(publicKey, b4a.from(JSON.stringify(version.record)))
+  } catch {
+    return null
+  }
+}
+
+module.exports = { didOf, keyOf, makeRecord, verifyRecord, resolveDid, publishRecord, signRecordVersion, verifyRecordVersion }

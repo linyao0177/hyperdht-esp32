@@ -245,6 +245,16 @@ One anchor node runs on a Google Cloud e2-small in Taiwan as a systemd service f
 
 By default the board signs its payments under Circle Gateway's batched domain. With `CONFIG_MER_BUYER_DOMAIN_NAME`, `_VERSION` and `_VERIFYING_CONTRACT` set to a token's own EIP-712 domain (USDC on the Arc testnet: `USDC`, `2`, `0x3600000000000000000000000000000000000000`), each authorization can be submitted straight to the token's `transferWithAuthorization`. Payments to anchor nodes keep the Gateway domain. `apps/pear-seller --settle` did that with a WDK account: 41 of 41 settled ([results](../../apps/pear-seller/README.md#results-settled-with-wdk-2026-11-07-arc-testnet)).
 
+## The device as a signer for its owner's wallet (2026-11-07)
+
+With `CONFIG_MER_OWNER_KEY` set to the owner's HyperDHT public key, a stream from that key to the device's DID carries signing requests instead of an attested reading ([`main/signer.c`](main/signer.c)). The device signs EIP-191 messages and EIP-3009 authorizations from its own address, up to `CONFIG_MER_SIGNER_MAX_VALUE` each; its secp256k1 key never leaves it. [`packages/wdk-protocol-boat-evm`](../../packages/wdk-protocol-boat-evm#the-device-as-a-wdk-signer) wraps this as a WDK signer, so the owner's WDK app holds a WDK account for the device: it read the device's balance, had it sign, and swept 0.05 USDC from it on the Arc testnet, 8 of 8 checks passed.
+
+## The device pays an x402 API (2026-11-07)
+
+With `CONFIG_MER_X402_URL` set, a task of its own ([`main/x402.c`](main/x402.c)) sets the clock by SNTP and calls the URL every `CONFIG_MER_X402_INTERVAL_S` with MER's x402 client, paying at most `CONFIG_MER_X402_MAX` per call. Against [the WDK-facilitated x402 server](../../packages/wdk-protocol-boat-evm/examples/x402) on the Arc testnet, 4 of 4 calls were paid and settled, 10.4–15.0 s each. The image grows to 1.26 MB (14% of the app partition free) with the HTTP client.
+
+MER signs through a global EIP-712 domain, so the x402 task must not sign while the buyer or anchoring does; that run had both off. See [x402.c](main/x402.c).
+
 ## Integration notes
 
 - **Duplicate `randombytes`.** MER defines a global `randombytes()` to feed TweetNaCl, and libsodium defines one too, so linking both fails with `multiple definition of 'randombytes'`. `CMakeLists.txt` renames MER's copy inside its own component (`randombytes=boat_mer_randombytes`) without changing MER's sources. A weak symbol upstream, or building MER's Ed25519 on libsodium, would remove the need for this.

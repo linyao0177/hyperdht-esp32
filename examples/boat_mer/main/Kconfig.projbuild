@@ -50,6 +50,41 @@ config MER_BUYER_VERIFYING_CONTRACT
     string "EIP-712 verifyingContract for the buyer's payments, empty for MER_GATEWAY_CONTRACT"
     default ""
 
+config MER_BUYER_CHAIN_ID
+    int "EIP-712 chainId for the buyer's payments, 0 for MER_CHAIN_ID"
+    default 0
+    help
+        For a token on another chain than the anchor nodes' payments, e.g.
+        2201 for USD₮0 on the Stable testnet.
+
+config MER_OWNER_KEY
+    string "Owner's HyperDHT public key (hex) that may ask the device to sign, empty for none"
+    default ""
+    help
+        A stream from this key to the device's DID carries signing requests
+        (main/signer.c) instead of an attested reading: the device is then a
+        remote signer for the owner's WDK wallet app.
+
+config MER_SIGNER_MAX_VALUE
+    int "Most base units of the token the device signs over in one authorization for its owner"
+    default 100000
+
+config MER_X402_URL
+    string "x402 URL the device calls and pays for, empty for none"
+    default ""
+
+config MER_X402_INTERVAL_S
+    int "Seconds between x402 calls"
+    default 60
+
+config MER_X402_MAX
+    int "Most base units the device pays for one x402 call"
+    default 10000
+
+config MER_X402_STACK
+    int "x402 task stack size"
+    default 12288
+
 config MER_TASK_STACK
     int "hdht loop task stack size"
     default 20480

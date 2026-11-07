@@ -37,4 +37,20 @@ anchor_start (void); // once our DID record is published
 void
 anchor_tick (uint32_t ticks); // once a second
 
+// signer.c: the device signs for its owner's wallet app (CONFIG_MER_OWNER_KEY)
+
+void
+signer_init (void);
+
+bool
+signer_is_owner (const uint8_t key[32]);
+
+void
+signer_serve (hdht_stream_t *stream);
+
+// x402.c: the device pays an HTTP API with x402 (CONFIG_MER_X402_URL)
+
+void
+x402_start (void);
+
 #endif

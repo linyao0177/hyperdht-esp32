@@ -29,6 +29,7 @@ swarm.on('connection', (conn) => seller.serve(conn, swarm.dht))
 | `didOf(publicKey)`, `keyOf(did)` | A DID is `did:mw:<Ed25519 public key hex>`, which is also the device's HyperDHT address |
 | `resolveDid(dht, did)` | Reads the DID record from the DHT. Returns `{ record, seq }`, with `record` null when it is not valid, or null when there is none |
 | `verifyRecord(publicKey, value)` | A record is valid when its `did` is the key it is stored under (the DHT checks that the key signed it) and its `eth_sig`, an EIP-191 signature of the DID, recovers to its `eth` |
+| `signRecordVersion(keyPair, record, seq)`, `verifyRecordVersion(did, version)` | A record version signed by the DID key, for logs that must outlive the DHT's latest record: a receipt can be checked against the record that was current when it was paid |
 | `makeRecord(publicKey, ethPrivateKey)`, `publishRecord(dht, keyPair, ethPrivateKey)` | Make and publish a record for your own DID, so devices can check who they pay |
 | `dialReading(dht, did, { record })` | Connects to the device, reads its one message, and returns `{ ok, checks, reading, openMs }`. Checks: the stream's peer is the DID, the hash matches the payload, the Ed25519 signature is the DID's, and the wallet matches the record |
 | `verifyReading(did, message, { remotePublicKey, record })` | The same checks on a reading you already hold |
@@ -57,7 +58,7 @@ Each stream message carries one GATT operation of MER's 0xEE00 service, with the
 npm install && npm test
 ```
 
-`npm test` runs `test/run.js` in Node.js and then in Bare: 34 checks each. The signatures must match ethers byte for byte (`test/vectors.json`, made by `test/gen-vectors.js`). A buyer on an in-memory stream signs the way MER's buyer does, and the seller must accept three slices, and refuse another wallet and another payee.
+`npm test` runs `test/run.js` in Node.js and then in Bare: 38 checks each. The signatures must match ethers byte for byte (`test/vectors.json`, made by `test/gen-vectors.js`). A buyer on an in-memory stream signs the way MER's buyer does, and the seller must accept three slices, and refuse another wallet and another payee.
 
 ## Bare
 
