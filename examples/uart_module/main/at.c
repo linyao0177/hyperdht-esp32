@@ -687,6 +687,7 @@ at_line (char *line) {
     ok();
     return;
   }
+  if (mqtt_at(name, args, set, query)) return; // AT+MQTT*, answered by mqtt.c's task
   if (strcmp(name, "AT+INFO") == 0) {
     int open = 0;
     for (int i = 0; i < MAX_LINKS; i++) open += links[i].open;
@@ -991,6 +992,7 @@ at_line (char *line) {
 
 void
 at_init (void) {
+  mqtt_init();
   uv_timer_init(&loop, &republish_timer);
   uv_timer_init(&loop, &restart_timer);
   uv_timer_init(&loop, &announce_timer);
@@ -1026,6 +1028,7 @@ at_init (void) {
 // listen if asked to
 void
 at_dht_ready (void) {
+  mqtt_dht_ready();
   hdht_set_relay_only(&dht, relay_only);
   if (relay_auto) find_relay(NULL);
   else if (has_relay) hdht_set_relay(&dht, relay);

@@ -25,8 +25,11 @@
 //
 // Threads: esp-mqtt calls the transport from its own task; the transport
 // hands each call to the hdht task (uv_async_send) and waits. Create it on the
-// hdht task. esp_mqtt_client_destroy destroys it: call that from any task
-// but the hdht task.
+// hdht task. Never call esp-mqtt's API from the hdht task: esp-mqtt's task
+// holds its API lock while it waits for the hdht task (in a connect, say), so
+// that call would wait for the hdht task itself. Use another task (a queue
+// and a worker task, as examples/uart_module does). esp_mqtt_client_destroy
+// destroys the transport.
 
 #ifndef HDHT_MQTT_H
 #define HDHT_MQTT_H
@@ -36,6 +39,7 @@
 
 #include "esp_transport.h"
 #include "hdht.h"
+#include "hdht_mqtt_signed.h"
 
 typedef struct {
   size_t rx_buffer; // bytes from the node not yet read by esp-mqtt; default 4096

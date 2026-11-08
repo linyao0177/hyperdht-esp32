@@ -8,6 +8,9 @@ dependencies:
   tlay/libudx:
     version: "0.1.0"
     override_path: "../../../components/libudx"
+  tlay/hdht_mqtt:
+    version: "0.1.0"
+    override_path: "../../../components/hdht_mqtt"
   tlay/hdht_ota:
     version: "0.1.0"
     override_path: "../../../components/hdht_ota"

@@ -286,6 +286,30 @@ One 0.7.0 image with the buyer, anchoring, the owner's signer (EVM and Solana), 
 
 Found and fixed on the way: the clock was set by SNTP only when `CONFIG_MER_X402_URL` was on, so without it the signer and the x402 seller compared validity windows with the seconds since boot and refused every authorization. SNTP now starts in `app_main` for every feature, and both say "device clock not set yet" until it has synced. Not fixed: about 24 s after boot the task watchdog warned twice that the hdht task had kept the CPU for 5 s (BLAKE2b, then TweetNaCl, as records are verified and signed back to back); the board did not reset.
 
+## MQTT, paid per message (2026-11-08)
+
+With `CONFIG_MER_MQTT_NODE` (a network name, or a node's key), the device joins an MQTT network of nodes anyone can run ([`packages/boat-mqtt-node`](../../packages/boat-mqtt-node)) over HyperDHT ([`components/hdht_mqtt`](../../components/hdht_mqtt)) and publishes an attested reading every `CONFIG_MER_MQTT_INTERVAL_S` to `d/<its key>/telemetry` ([`main/mqtt.c`](main/mqtt.c)). Its DID record gains `"mqtt":"<node key>"`, so apps and other nodes find the node it is on.
+
+A node that charges puts its terms (payee, token, price per message and per KB, credit) in its own DHT record and sends invoices to the device's inbox. The device pays each with an EIP-3009 authorization signed by MER and published to `d/<its key>/to/<node>/pay`. It pays:
+
+- only the payee and token in the node's signed terms, and only in its buyer's token and EIP-712 domain (`CONFIG_MER_BUYER_*`). That also leaves MER's single global domain as the buyer set it, and the payment is signed on the hdht task like the buyer's;
+- at most what it counted itself plus the node's stated credit, and at most `CONFIG_MER_MQTT_MAX_PAY` at once.
+
+The node checks each payment against the device's DID record and stops taking its messages while more than the credit is unpaid. `packages/wdk-protocol-boat-evm/examples/mqtt-node.js` runs such a node and settles the payments from a WDK account in Multicall3 batches.
+
+On the board, with an anvil fork of the Stable testnet (USD₮0), two runs of 5 minutes, at 100 µUSD₮0 per message plus 1000 per KB:
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| Readings published (about 430 bytes each) | 55 | 51 |
+| Invoices paid / settled on chain | 29 / 29, in 10 batches | 26 / 26, in 9 batches |
+| What the device counted vs what the node charged | equal (28,638) | equal (26,570) |
+| Paid | 0.028117 USD₮0 | 0.026048 USD₮0 |
+| Signing a payment on the C3 | 0.40–0.65 s | 0.40–0.65 s |
+| Gas per payment, batches of 3 | ~58,000 | ~58,000 |
+
+In run 1 the task watchdog warned once more, 4 minutes in: the hdht task had signed four times back to back (anchoring and an MQTT reading, each an attestation and a payment). The readings are now attested on the MQTT task instead, and run 2 had only the boot-time warnings noted above.
+
 ## Integration notes
 
 - **Duplicate `randombytes`.** MER defines a global `randombytes()` to feed TweetNaCl, and libsodium defines one too, so linking both fails with `multiple definition of 'randombytes'`. `CMakeLists.txt` renames MER's copy inside its own component (`randombytes=boat_mer_randombytes`) without changing MER's sources. A weak symbol upstream, or building MER's Ed25519 on libsodium, would remove the need for this.

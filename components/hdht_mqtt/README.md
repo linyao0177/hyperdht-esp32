@@ -21,7 +21,12 @@ The rest is esp-mqtt as usual: `esp_mqtt_client_publish`, `esp_mqtt_client_subsc
 - **Threads.** esp-mqtt calls the transport from its own task. The transport never touches hdht from there: it sets a command, wakes the hdht loop with `uv_async_send` and waits on an event group. Bytes go through two FreeRTOS stream buffers (4 KB in, 2 KB out by default, `hdht_mqtt_config_t`). Create the transport on the hdht task. `esp_mqtt_client_destroy` destroys it; call that from any task except the hdht task.
 - **Status.** `hdht_mqtt_get_info` reports the node, how many nodes the lookup found, lookup and connect times, whether the stream is relayed, and the last error.
 - **Relays.** A device behind a random NAT uses `hdht_set_relay` as with any hdht connection; the transport needs nothing more.
+- **Never call esp-mqtt from the hdht task.** esp-mqtt's task holds its API lock while it waits for the hdht task (during a connect, for one), so such a call waits for itself until the connect times out. Hand esp-mqtt calls to another task, as `examples/uart_module` (`main/mqtt.c`) and `examples/boat_mer` do.
 
 If esp-mqtt falls a whole rx buffer behind, the transport closes the connection rather than drop part of an MQTT packet, and esp-mqtt reconnects.
+
+## Signed messages
+
+A node checks who publishes, but a node is anyone's machine: it, or a bridge, could change a message or play an old one again. [`hdht_mqtt_signed.h`](include/hdht_mqtt_signed.h) adds the publisher's own Ed25519 signature over the topic, a sequence number and the payload (74 bytes per message). A subscriber checks it against the key in the topic, whatever node the message came through, and refuses a sequence number it has seen (`SignedInbox` in `packages/boat-mqtt-node`). `signed.c` is plain C over libsodium and is checked against the JS on the desktop (`test/test_signed.c`, run by the package's tests). Signing takes 20–25 ms on the C3.
 
 See [`examples/mqtt_p2p`](../../examples/mqtt_p2p) for a device that publishes telemetry and answers commands, and the measurements.

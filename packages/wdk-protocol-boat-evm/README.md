@@ -87,6 +87,14 @@ On a fork of the Stable testnet, with the real USD₮0 contract, 2026-11-08:
 
 With session settlement (one authorization per paying session, boat-peer `settle: 'session'`) and batches, a seller pays roughly 0.0005 USD₮0 of gas per session. `apps/pear-seller --settle --batch <seconds>` settles this way.
 
+## An MQTT node paid per message
+
+[`examples/mqtt-node.js`](examples/mqtt-node.js) runs an MQTT node of [`packages/boat-mqtt-node`](../boat-mqtt-node) that charges per message. Devices (`examples/boat_mer` with `CONFIG_MER_MQTT_NODE`) pay its invoices with EIP-3009 authorizations, and the node checks each one against the device's DID record. This script settles them from WDK account 0, which is also the payee, with `settleBatch` every `--batch` seconds. On a Stable testnet fork with the board (2026-11-08), 29 of 29 payments were settled in 10 batches, with the device's count equal to the node's ([results](../../examples/boat_mer/README.md#mqtt-paid-per-message-2026-11-08)).
+
+```bash
+node examples/mqtt-node.js --rpc http://127.0.0.1:8550 --mnemonic-file wdk.txt --network boat-mqtt-paid --batch 30 --fund
+```
+
 ## ERC-4337 smart accounts and sponsored gas
 
 A seller can be paid to, and settle from, a WDK ERC-4337 account (`@tetherto/wdk-wallet-evm-erc-4337`, a Safe with the 4337 module). Settlements are then user operations, and a batch is one user operation of several calls (the Safe's MultiSend, all or none).

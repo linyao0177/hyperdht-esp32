@@ -9,3 +9,6 @@ dependencies:
   idf: ">=5.3"
   espressif/libsodium: "^1.0.20"
   tlay/hdht: "0.1.0"
+files:
+  exclude:
+    - "test/**"

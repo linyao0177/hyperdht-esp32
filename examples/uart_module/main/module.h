@@ -9,7 +9,7 @@
 
 #include "hdht.h"
 
-#define MODULE_VERSION "hdht-module/0.6.2"
+#define MODULE_VERSION "hdht-module/0.7.0"
 
 extern uv_loop_t loop;
 extern hdht_t dht;
@@ -59,5 +59,16 @@ zk_cmd_root (const char *args, bool query);
 // unix time in ms, or 0 until SNTP has set the clock (safe from any task)
 uint64_t
 zk_now_ms (void);
+
+// mqtt.c: AT+MQTT* (MQTT over HyperDHT)
+void
+mqtt_init (void);
+
+void
+mqtt_dht_ready (void);
+
+// true when name is an AT+MQTT command; the reply comes from mqtt.c's task
+bool
+mqtt_at (const char *name, const char *args, bool set, bool query);
 
 #endif

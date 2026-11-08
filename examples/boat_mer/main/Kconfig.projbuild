@@ -149,6 +149,26 @@ config MER_OTA_INTERVAL_S
     int "Seconds between update checks"
     default 3600
 
+config MER_MQTT_NODE
+    string "MQTT network name, or a node's public key in hex (empty: off)"
+    default ""
+    help
+        Publish attested readings to an MQTT network over HyperDHT
+        (packages/boat-mqtt-node) and pay the node per message with EIP-3009
+        authorizations, in the buyer's token and domain (CONFIG_MER_BUYER_*).
+
+config MER_MQTT_INTERVAL_S
+    int "Seconds between readings published over MQTT"
+    default 5
+
+config MER_MQTT_MAX_PAY
+    int "Most the device pays an MQTT node at once, in token base units"
+    default 100000
+    help
+        On top of this, the device never pays more than it counted itself
+        (the node's price times its own messages and bytes) plus the node's
+        stated credit.
+
 config MER_X402_STACK
     int "x402 task stack size"
     default 12288

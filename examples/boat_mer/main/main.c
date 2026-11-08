@@ -65,7 +65,7 @@ hdht_t dht;
 static hdht_server_t server;
 boat_keypair_t kp;
 
-static char record[320]; // our DID record (283 bytes), the same bytes on every boot
+static char record[400]; // our DID record (283 bytes, 357 with "mqtt"), the same bytes on every boot
 static size_t record_len;
 static uint64_t record_seq; // 0 until we know the seq stored in the DHT
 static bool record_published;
@@ -101,6 +101,17 @@ eip191_digest (const char *msg, uint8_t out[32]) {
   boat_keccak256((const uint8_t *) buf, (size_t) n, out);
 }
 
+static char record_sig_hex[131];
+static char record_home[65]; // the MQTT node we are on (mqtt.c), or empty
+
+static void
+compose_record (void) {
+  int n = record_home[0]
+            ? snprintf(record, sizeof(record), "{\"v\":1,\"did\":\"%s\",\"eth\":\"%s\",\"eth_sig\":\"0x%s\",\"mqtt\":\"%s\"}", kp.did, kp.eth_addr_hex, record_sig_hex, record_home)
+            : snprintf(record, sizeof(record), "{\"v\":1,\"did\":\"%s\",\"eth\":\"%s\",\"eth_sig\":\"0x%s\"}", kp.did, kp.eth_addr_hex, record_sig_hex);
+  record_len = n > 0 && (size_t) n < sizeof(record) ? (size_t) n : 0;
+}
+
 static void
 build_record (void) {
   uint8_t digest[32], sig[65];
@@ -109,10 +120,8 @@ build_record (void) {
   boat_secp256k1_sign(&kp, digest, sig);
   long ms = (long) ((esp_timer_get_time() - t0) / 1000);
 
-  char sig_hex[131];
-  boat_bytes_to_hex(sig, 65, sig_hex);
-  int n = snprintf(record, sizeof(record), "{\"v\":1,\"did\":\"%s\",\"eth\":\"%s\",\"eth_sig\":\"0x%s\"}", kp.did, kp.eth_addr_hex, sig_hex);
-  record_len = n > 0 && (size_t) n < sizeof(record) ? (size_t) n : 0;
+  boat_bytes_to_hex(sig, 65, record_sig_hex);
+  compose_record();
   printf("MER|record built len=%u eth_sign_ms=%ld\n", (unsigned) record_len, ms);
 }
 
@@ -182,6 +191,7 @@ on_record_put (hdht_t *d, int status, unsigned stored, void *data) {
   record_published = true;
   if (first && has_seller) resolve_seller();
   if (first) anchor_start();
+  if (first) mqtt_start(); // nodes check our wallet in the record
 }
 
 static void
@@ -192,6 +202,22 @@ on_own_record (hdht_t *d, int status, uint64_t seq, const uint8_t *value, size_t
   else record_seq = 1;
   printf("MER|record lookup status=%d seq=%llu ms=%ld\n", status, (unsigned long long) record_seq, (long) ((esp_timer_get_time() - record_started) / 1000));
   if (hdht_mutable_put(d, kp.ed25519_pk, kp.ed25519_sk, record_seq, (const uint8_t *) record, record_len, on_record_put, NULL) != 0) on_record_put(d, HDHT_ENOMEM, 0, NULL);
+}
+
+static void
+publish_record (void);
+
+// mqtt.c: the node we are on goes in our DID record as "mqtt"
+void
+record_set_home (const uint8_t node_key[32]) {
+  char h[65];
+  sodium_bin2hex(h, sizeof(h), node_key, 32);
+  if (strcmp(h, record_home) == 0) return;
+  memcpy(record_home, h, sizeof(h));
+  compose_record();
+  if (record_seq) record_seq++; // a new record: above the one stored
+  printf("MER|record names MQTT node %.16s...\n", record_home);
+  publish_record();
 }
 
 static void
@@ -456,6 +482,7 @@ on_tick (uv_timer_t *t) {
   if (++ticks % 30 == 0) log_heap("tick");
   if (ticks % RECORD_REPUBLISH_S == 0) publish_record();
   anchor_tick(ticks);
+  mqtt_tick(ticks);
   hdht_ota_tick();
 }
 

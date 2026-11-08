@@ -122,6 +122,21 @@ Every message on a link that contains the key `"zk"` gets one `+ZK:<link>,<seq>,
 
 Each takes 1.24 s on the C3, one at a time and below the network's priority. The messages themselves still arrive as `+DATA` at once. The checks do not use the sender's DID: anyone can connect with a new key and send a copied message, which is why `t` and M are checked instead.
 
+### MQTT
+
+Since 0.7.0 the module is also an MQTT client of nodes that anyone can run ([`packages/boat-mqtt-node`](../packages/boat-mqtt-node)), over HyperDHT ([`components/hdht_mqtt`](../components/hdht_mqtt)). It logs in with its DID key, so there is no broker address, password or certificate. Only the module may publish under `d/<its key>/`, and `~/` in a topic stands for that prefix. A message to the module arrives under `d/<sender key>/to/<its key>/…`, so the host learns the sender from the topic. Topics in commands may not contain commas. These commands are answered by a task of their own, so their `OK` can take a moment.
+
+| Command | Response | Notes |
+|---|---|---|
+| `AT+MQTTCONN=<network name or node DID>` | — | **DHT**. Looks the network up (BLAKE2b-256 of the name) and connects to a node it finds, or connects to that node. Then `+MQTTCONN`. The module reconnects by itself, to another node of the network if its node goes away, and sends `+MQTTCONN` again each time |
+| `AT+MQTTCONN?` | `+MQTTSTATE:<connected 0/1>,<target>,<node did>,<nodes found>,<last error>,<connects>,<subscriptions>` | |
+| `AT+MQTTCLOSE` | — | disconnects and stops reconnecting |
+| `AT+MQTTSUB=<filter>,<qos>` / `AT+MQTTUNSUB=<filter>` | `+MQTTSUB:<msg id>` when connected | up to 8. They are kept and made again on every connect, so the host can subscribe before connecting. Then `+MQTTACK:SUB,<msg id>` |
+| `AT+MQTTPUB=<topic>,<qos>,<retain 0/1>,<hex>` / `AT+MQTTPUBT=<topic>,<qos>,<retain>,<text>` | `+MQTTPUB:<msg id>` | up to 1024 bytes. QoS 1 and 2 end with `+MQTTACK:PUB,<msg id>`. Publishing under another key gets the connection closed by the node |
+| `AT+MQTTPUBS=<topic>,<qos>,<retain>,<text>` | `+MQTTPUB:<msg id>,<seq>,<sign µs>` | signed with the DID key ([signed messages](../components/hdht_mqtt/include/hdht_mqtt_signed.h)): subscribers check it whatever node it came through, and refuse an old sequence number. The sequence number goes up across restarts. Signing takes 20–25 ms on the C3 |
+
+To let apps find the module's node from its DID, put the node's DID from `+MQTTCONN` in the module's record as `"mqtt":"<node key hex>"` with `AT+PUTT`.
+
 ## Events
 
 | Event | When |
@@ -140,6 +155,9 @@ Each takes 1.24 s on the C3, one at a time and below the network's priority. The
 | `+GET:<did>,<status>,<seq>,<hex>` | status 0 with the value, or -110 if not found |
 | `+LOOKUP:<topic>,<status>,<count>[,<did>...]` | up to 16 DIDs. They are hints, not proof: connect to authenticate, and check the peer's record |
 | `+ANNOUNCE:<topic>,<status>,<nodes>` / `+UNANNOUNCE:<topic>,<status>,<nodes>` | an announce or unannounce finished. Status 0 means at least one node took it |
+| `+MQTTCONN:<node did>,<connect ms>,<relayed 0/1>` / `+MQTTDISC` | connected to an MQTT node, or lost it (the module reconnects) |
+| `+MQTTMSG:<total>,<offset>,<hex>,<topic>` | a message on a subscription; the topic is last since it may contain commas. A message over 1024 bytes arrives as several events with rising offsets, the topic only in the first |
+| `+MQTTACK:SUB,<msg id>` / `+MQTTACK:PUB,<msg id>` | the node confirmed a subscription or a QoS 1/2 message |
 | `+ZK:<link>,<seq>,<result>` | an event with a proof was checked (see [Camera events with proofs](#camera-events-with-proofs)) |
 
 ## A session

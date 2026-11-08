@@ -68,4 +68,19 @@ x402_sell_start (void);
 int
 attested_reading (char *msg, size_t cap);
 
+// main.c: names the MQTT node we are on in our DID record, and republishes it
+void
+record_set_home (const uint8_t node_key[32]);
+
+// mqtt.c: MQTT over HyperDHT, paid per message (CONFIG_MER_MQTT_NODE)
+
+bool
+mqtt_enabled (void);
+
+void
+mqtt_start (void); // once our DID record is out
+
+void
+mqtt_tick (uint32_t ticks); // once a second
+
 #endif

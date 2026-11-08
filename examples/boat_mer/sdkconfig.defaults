@@ -16,3 +16,7 @@ CONFIG_EXAMPLE_PROVIDE_WIFI_CONSOLE_CMD=n
 
 # x402 payments arrive in a header (CONFIG_MER_X402_SELL_PORT)
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=3072
+
+# MQTT runs over HyperDHT (components/hdht_mqtt): no TLS or WebSocket transports
+CONFIG_MQTT_TRANSPORT_SSL=n
+CONFIG_MQTT_TRANSPORT_WEBSOCKET=n

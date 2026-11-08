@@ -8,6 +8,9 @@ dependencies:
   tlay/hdht_cred:
     version: "0.1.0"
     override_path: "../../../components/hdht_cred"
+  tlay/hdht_mqtt:
+    version: "0.1.0"
+    override_path: "../../../components/hdht_mqtt"
   tlay/zk:
     version: "0.1.0"
     override_path: "../../../components/zk"
