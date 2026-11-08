@@ -10,10 +10,11 @@
 // The authorization's validBefore comes from the device clock, so the task
 // waits for SNTP first.
 //
-// MER keeps the EIP-712 domain in one global (boat_pay_set_domain_ext, then
-// boat_pay_authorize), so two tasks signing at once can sign under each
-// other's domain. Run this without the buyer and anchoring until MER takes
-// the domain per call.
+// MER v1.0.1 keeps the EIP-712 domain in one global (boat_pay_set_domain_ext,
+// then boat_pay_authorize), so two tasks signing at once can sign under each
+// other's domain. With patches/boat-mer applied, MER signs under a per-call
+// domain and this task can run next to the buyer, anchoring and the signer;
+// without it, turn those off.
 
 #include <stdio.h>
 #include <sys/time.h>
@@ -32,8 +33,6 @@ static void
 x402_task (void *arg) {
   (void) arg;
   while (kp.eth_addr_hex[0] == '\0') vTaskDelay(pdMS_TO_TICKS(100)); // MER loads the keys on the hdht task
-  esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-  esp_netif_sntp_init(&config);
   if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(20000)) != ESP_OK) printf("MER|x402 clock not set by SNTP yet\n");
   printf("MER|x402 url=%s every %d s, clock %lld\n", CONFIG_MER_X402_URL, CONFIG_MER_X402_INTERVAL_S, (long long) time(NULL));
 

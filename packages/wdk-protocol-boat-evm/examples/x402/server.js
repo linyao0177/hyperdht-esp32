@@ -19,6 +19,7 @@ import WalletManagerEvm from '@tetherto/wdk-wallet-evm'
 import { x402Facilitator } from '@x402/core/facilitator'
 import { registerExactEvmScheme } from '@x402/evm/exact/facilitator'
 import { registerBoat } from '../../index.js'
+import { x402FacilitatorSigner } from '../../x402.js'
 
 const args = process.argv.slice(2)
 const opt = (name, fallback) => {
@@ -47,7 +48,7 @@ const payee = await wdk.getAccount('chain', 0)
 const facilitatorAccount = await wdk.getAccount('chain', 1)
 
 const facilitator = new x402Facilitator()
-registerExactEvmScheme(facilitator, { signer: await facilitatorAccount.getBoatProtocol().x402FacilitatorSigner(), networks: network })
+registerExactEvmScheme(facilitator, { signer: await x402FacilitatorSigner(facilitatorAccount), networks: network })
 
 const requirement = {
   scheme: 'exact',

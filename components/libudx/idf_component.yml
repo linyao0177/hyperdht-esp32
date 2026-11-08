@@ -1,0 +1,10 @@
+version: "0.1.0"
+description: Holepunch's libudx (reliable streams over UDP) on ESP-IDF, vendored with two fixes for low-memory devices
+url: https://github.com/linyao0177/hyperdht-esp32/tree/main/components/libudx
+repository: https://github.com/linyao0177/hyperdht-esp32.git
+license: Apache-2.0
+targets:
+  - esp32c3
+dependencies:
+  idf: ">=5.3"
+  tlay/uv_esp: "0.1.0"

@@ -16,6 +16,12 @@
 //    "validBefore":"1794..","nonce":"0x<32 bytes>"}
 //     -> an EIP-3009 TransferWithAuthorization from the device's own address,
 //        signed under the token's domain: {"id":"3","ok":true,"signature":".."}
+//   {"id":"4","op":"sol_address"}
+//     -> the device's Solana key (main/solana.h): {"id":"4","ok":true,"key":"<hex>","did":".."}
+//   {"id":"5","op":"sol_transfer","message":"<transaction message, base64>"}
+//     -> an Ed25519 signature of the message, when it is a transfer of
+//        CONFIG_MER_SOL_MINT out of the device's own token account that
+//        someone else pays the fee of: {"id":"5","ok":true,"signature":"<hex>"}
 //
 // Policy, on the device: only TransferWithAuthorization typed data (no
 // transactions, so the device never needs gas), at most
@@ -33,12 +39,16 @@
 #include "boat_nano.h"
 #include "boat_pal.h"
 #include "mer.h"
+#include "solana.h"
 
-#define MAX_REQUEST 768
+#define MAX_REQUEST 1024 // a Solana transfer message is about 330 bytes of base64
 #define MAX_VALIDITY_S (7 * 24 * 3600)
 
 static uint8_t owner[32];
 static bool has_owner;
+static sol_keypair_t sol;
+static uint8_t sol_mint[32];
+static bool has_sol_mint;
 
 bool
 signer_enabled (void) {
@@ -50,6 +60,13 @@ signer_init (void) {
   has_owner = strlen(CONFIG_MER_OWNER_KEY) == 64 &&
               sodium_hex2bin(owner, 32, CONFIG_MER_OWNER_KEY, 64, NULL, NULL, NULL) == 0;
   if (has_owner) printf("MER|signer owner=%.16s... max_value=%d\n", CONFIG_MER_OWNER_KEY, CONFIG_MER_SIGNER_MAX_VALUE);
+  sol_derive(&sol, kp.ed25519_sk);
+  has_sol_mint = sol_base58_decode(CONFIG_MER_SOL_MINT, sol_mint);
+  if (has_owner) {
+    char address[45];
+    sol_base58_encode(sol.pk, address);
+    printf("MER|signer solana=%s mint=%s\n", address, has_sol_mint ? CONFIG_MER_SOL_MINT : "-");
+  }
 }
 
 bool
@@ -123,6 +140,7 @@ op_transfer (hdht_stream_t *s, const char *id, const char *req) {
   slice.valid_after = strtoul(after, NULL, 10);
   slice.valid_before = strtoul(before, NULL, 10);
   uint32_t now = boat_pal_time();
+  if (now < MER_CLOCK_SET) { refuse(s, id, "transfer", "device clock not set yet"); return; }
   if (slice.valid_before <= now || slice.valid_before - now > MAX_VALIDITY_S) { refuse(s, id, "transfer", "validity out of range"); return; }
 
   boat_nano_auth_t auth;
@@ -141,8 +159,34 @@ op_transfer (hdht_stream_t *s, const char *id, const char *req) {
 }
 
 static void
+op_sol_transfer (hdht_stream_t *s, const char *id, const char *req) {
+  static char b64[MAX_REQUEST];
+  static uint8_t message[768];
+  size_t len;
+  if (!has_sol_mint) { refuse(s, id, "sol_transfer", "no Solana mint configured"); return; }
+  if (!json_str(req, "message", b64, sizeof(b64)) ||
+      sodium_base642bin(message, sizeof(message), b64, strlen(b64), NULL, &len, NULL, sodium_base64_VARIANT_ORIGINAL) != 0) {
+    refuse(s, id, "sol_transfer", "bad message");
+    return;
+  }
+  sol_transfer_t t;
+  const char *why = sol_check_transfer(message, len, sol.pk, sol_mint, (uint64_t) CONFIG_MER_SIGNER_MAX_VALUE, &t);
+  if (why) { refuse(s, id, "sol_transfer", why); return; }
+  uint8_t sig[64];
+  int64_t t0 = esp_timer_get_time();
+  crypto_sign_detached(sig, NULL, message, len, sol.sk);
+  char hex[129], f[180], to[45];
+  sodium_bin2hex(hex, sizeof(hex), sig, 64);
+  snprintf(f, sizeof(f), "\"ok\":true,\"signature\":\"%s\"", hex);
+  sol_base58_encode(t.destination, to);
+  printf("MER|signer sol_transfer to=%.10s... amount=%llu transfers=%d len=%u ms=%ld\n", to, (unsigned long long) t.amount, t.transfers, (unsigned) len, (long) ((esp_timer_get_time() - t0) / 1000));
+  reply(s, id, f);
+}
+
+static void
 on_owner_data (hdht_stream_t *s, const uint8_t *data, size_t len) {
-  char req[MAX_REQUEST + 1], id[16] = "?", op[16];
+  static char req[MAX_REQUEST + 1]; // off the hdht task's stack
+  char id[16] = "?", op[16];
   if (len > MAX_REQUEST) { refuse(s, id, "?", "request too long"); return; }
   memcpy(req, data, len);
   req[len] = '\0';
@@ -157,6 +201,13 @@ on_owner_data (hdht_stream_t *s, const uint8_t *data, size_t len) {
     op_sign(s, id, req);
   } else if (strcmp(op, "transfer") == 0) {
     op_transfer(s, id, req);
+  } else if (strcmp(op, "sol_address") == 0) {
+    char f[200], hex[65];
+    sodium_bin2hex(hex, sizeof(hex), sol.pk, 32);
+    snprintf(f, sizeof(f), "\"ok\":true,\"key\":\"%s\",\"did\":\"%s\"", hex, kp.did);
+    reply(s, id, f);
+  } else if (strcmp(op, "sol_transfer") == 0) {
+    op_sol_transfer(s, id, req);
   } else {
     refuse(s, id, op, "unsupported op");
   }

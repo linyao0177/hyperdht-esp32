@@ -79,9 +79,12 @@ async function make() {
     signFlags.push('--sign', '--hardened-runtime', '--identity', process.env.MAC_CODESIGN_IDENTITY)
   }
 
+  // BARE_BUILD: another bare-build to run, e.g. one installed apart with
+  // bare-module-lexer pinned (README: macOS 26). ws's optional addons are
+  // deferred: ethers (in WDK) pulls in ws, and they are not installed.
   const build = spawn(
-    'bare-build',
-    ['--standalone', ...signFlags, '--host', host, '--out', out, 'bin.mjs'],
+    process.env.BARE_BUILD || 'bare-build',
+    ['--standalone', ...signFlags, '--host', host, '--defer', 'bufferutil', '--defer', 'utf-8-validate', '--out', out, 'bin.mjs'],
     {
       cwd: root,
       stdio: 'inherit',

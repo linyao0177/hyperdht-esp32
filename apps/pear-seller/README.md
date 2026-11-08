@@ -30,7 +30,9 @@ Options after `npm start --`:
 
 | | |
 |---|---|
-| `--settle` | Settle every payment on-chain from the WDK account. The account needs the chain's gas, and the board's wallet the token |
+| `--settle` | Settle payments on-chain from the WDK account. The account needs the chain's gas, and the board's wallet the token |
+| `--batch <seconds>` | With `--settle`: queue settlements and send them together every so many seconds, in one transaction through Multicall3 (`settleBatch`; 42–53% less gas a settlement in batches of 5–50 on Stable's USD₮0). Each receipt's settlement entry names the batch's transaction |
+| `--per-session` | Session settlement: devices sign a running total on one nonce, and `--settle` submits one transfer per session instead of one per slice. Needs a board built with [patches/boat-mer](../../patches/boat-mer) 0002 |
 | `--rpc <url>`, `--chain-id`, `--token`, `--token-name`, `--token-version` | The chain and the EIP-3009 token. Defaults: USDC on the Arc testnet (`USDC`/`2`) |
 | `--dial did:mw:<board>` | Read the board's signed reading every minute |
 
@@ -73,6 +75,31 @@ Same board and app, with `--settle`: the board signed under USDC's own domain on
 | Cost | About 2,180 micro-USDC of gas per settlement, for slices of 3–4 micro-USDC. Settling slice by slice is for the demo; see [wdk-protocol-boat-evm](../../packages/wdk-protocol-boat-evm/README.md#results-2026-11-07-arc-testnet-usdc) |
 
 The 122 receipts from before the switch to WDK fail `verify-receipts.js`: they were paid to the app's earlier wallet, and a DHT record keeps only its latest version, so the record can no longer prove that payee.
+
+## Session settlement (2026-11-07)
+
+With MER patched (0002) and `--settle --per-session`, the board ran 4 paying sessions of 4–8 slices: 28 slices, all accepted, settled as 4 transfers instead of 28. The board's wallet paid 109 micro-USDC (16 + 31 + 31 + 31), and gas came to about 2,060 micro-USDC per transfer. `verify-receipts.js` accepts the session's receipts sharing one nonce as long as their totals rise, counts each session once, and found every settled one used on-chain.
+
+Gas per transfer stays the same, so what session settlement buys depends on how much a session is worth: a 7 kW charger running for an hour at $0.25 per kWh is 1.75 USDC, against about 0.002 USDC of gas on Arc.
+
+## A standalone binary, installed peer-to-peer (2026-11-07)
+
+`npm run make` builds one executable with `bare-build` (90 MB on darwin-arm64: Bare, the app and its native addons). `pear build` lays it out, `pear stage` puts it on the app's `upgrade` link, `pear seed` serves it, and `pear install <link>` installs it from peers:
+
+| | Result |
+|---|---|
+| Standalone binary | Started with a new identity, published its DID record on 20 nodes, logged the record version, and read the board's signed reading by DID |
+| `pear stage` | Version 3 of `pear://se7ous…31ory`, 93 MB of blobs |
+| `pear install` | 6 s from a seeder on the same Mac; the installed file was byte for byte the built one, and it ran the same way |
+
+On macOS 26.6 `bare-build` and `bare-pack` crashed with SIGSEGV under Node.js 22 and 23, for any app and any target. The cause is `bare-module-lexer` 1.6.6 and later, whose addon crashes Node on its first call; 1.6.5 works. Pinning it in the app would also pin it inside the bundle, where 1.6.5 does not fit the newer loader, so install `bare-build` apart with the pin and point `BARE_BUILD` at it:
+
+```bash
+mkdir bb && cd bb && echo '{"dependencies":{"bare-build":"1.6.0"},"overrides":{"bare-module-lexer":"1.6.5"}}' > package.json && npm install
+BARE_BUILD=$PWD/node_modules/.bin/bare-build npm run make   # in apps/pear-seller
+```
+
+The build defers `bufferutil` and `utf-8-validate`, optional addons of `ws`, which ethers (in WDK) pulls in.
 
 ## DID record versions in the log (2026-11-07)
 

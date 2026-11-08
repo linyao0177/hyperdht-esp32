@@ -1,0 +1,14 @@
+version: "0.1.0"
+description: Firmware updates for hyperdht-esp32 devices from a Hypercore, every block checked on the device against the publisher's signature
+url: https://github.com/linyao0177/hyperdht-esp32/tree/main/components/hdht_ota
+repository: https://github.com/linyao0177/hyperdht-esp32.git
+license: MIT
+targets:
+  - esp32c3
+dependencies:
+  idf: ">=5.3"
+  espressif/libsodium: "^1.0.20"
+  tlay/hdht: "0.1.0"
+files:
+  exclude:
+    - "test/**"

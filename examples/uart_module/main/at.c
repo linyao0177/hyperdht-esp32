@@ -14,6 +14,7 @@
 #include "esp_system.h"
 #include "nvs.h"
 
+#include "hdht_cred.h"
 #include "module.h"
 #include "port.h"
 
@@ -314,6 +315,22 @@ on_get (hdht_t *d, int status, uint64_t seq, const uint8_t *value, size_t len, v
   did_of(data, dd);
   port_printf("+GET:%s,%d,%llu,%s", dd, status, (unsigned long long) seq, status == 0 ? to_hex(value, len) : "");
   free(data);
+}
+
+// AT+CHECK: a peer's manufacturer credential (components/hdht_cred)
+typedef struct {
+  hdht_cred_verify_t verify; // first, so the callback's pointer is the check
+  uint8_t trusted[1][32];
+} check_t;
+
+static void
+on_check (hdht_cred_verify_t *v, int result, const hdht_cred_t *cred) {
+  char dd[72], iss[72] = "";
+  did_of(v->device, dd);
+  if (cred) did_of(cred->issuer, iss);
+  // the reason goes last: it may contain commas
+  port_printf("+CHECK:%s,%d,%s,%s,%s", dd, result, iss, cred ? cred->model : "", hdht_cred_reason(result));
+  free(v);
 }
 
 static void
@@ -847,6 +864,31 @@ at_line (char *line) {
     if (hdht_mutable_get(&dht, key, 0, on_get, key) != 0) {
       free(key);
       error("get failed to start");
+      return;
+    }
+    ok();
+    return;
+  }
+  if (strcmp(name, "AT+CHECK") == 0 && set) {
+    // AT+CHECK=<did>[,<trusted issuer did>]: the issuer defaults to CONFIG_MODULE_ISSUER
+    char *comma = strchr(args, ',');
+    if (comma) *comma = '\0';
+    const char *issuer = comma ? comma + 1 : CONFIG_MODULE_ISSUER;
+    check_t *c = calloc(1, sizeof(check_t));
+    uint8_t device[32];
+    if (c == NULL || !parse_key(args, device)) {
+      free(c);
+      error("bad did");
+      return;
+    }
+    if (issuer[0] == '\0' || !parse_key(issuer, c->trusted[0])) {
+      free(c);
+      error(issuer[0] ? "bad issuer did" : "no trusted issuer");
+      return;
+    }
+    if (hdht_cred_verify_device(&c->verify, &dht, device, (const uint8_t (*)[32]) c->trusted, 1, on_check, NULL) != 0) {
+      free(c);
+      error("check failed to start");
       return;
     }
     ok();

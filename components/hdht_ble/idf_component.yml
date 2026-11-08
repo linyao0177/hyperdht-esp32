@@ -1,0 +1,10 @@
+version: "0.1.0"
+description: SecretStream (Holepunch) over BLE GATT with NimBLE, keyed by the device's HyperDHT identity
+url: https://github.com/linyao0177/hyperdht-esp32/tree/main/components/hdht_ble
+repository: https://github.com/linyao0177/hyperdht-esp32.git
+license: MIT
+targets:
+  - esp32c3
+dependencies:
+  idf: ">=5.3"
+  tlay/hdht: "0.1.0"

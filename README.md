@@ -84,13 +84,22 @@ You get `hello` back, then a reading every 5 s pushed from another task on the d
 
 ## Using it in your project
 
-**1. Add the components.** Add this repo as a git submodule (or copy it), and point your project's top-level `CMakeLists.txt` at its `components/` directory before `project()`:
+**1. Add the components.** Add this repo as a git submodule (or copy it), and list the components in your `main/idf_component.yml`, pointing at the copy until they are on the ESP Component Registry:
 
-```cmake
-set(EXTRA_COMPONENT_DIRS ${CMAKE_CURRENT_LIST_DIR}/third_party/hyperdht-esp32/components)
+```yaml
+dependencies:
+  tlay/hdht:
+    version: "0.1.0"
+    override_path: "../third_party/hyperdht-esp32/components/hdht"
+  tlay/libudx:
+    version: "0.1.0"
+    override_path: "../third_party/hyperdht-esp32/components/libudx"
+  tlay/uv_esp:
+    version: "0.1.0"
+    override_path: "../third_party/hyperdht-esp32/components/uv_esp"
 ```
 
-In your component's `CMakeLists.txt`, add `REQUIRES hdht`, plus `hdht_ble` if you want BLE. libsodium is pulled in automatically from the ESP Component Registry.
+In your component's `CMakeLists.txt`, add `REQUIRES hdht`, plus `hdht_ble` for BLE or `hdht_cred` for credential checks (add them to the manifest the same way). libsodium comes from the ESP Component Registry. The examples in this repo are set up this way. A project that lists only `tlay/hdht` this way also builds, the rest resolving through the components' own manifests; that was tried with the components packed by `compote` into registry-style folders, and short names in `REQUIRES` still work (ESP-IDF 5.5).
 
 **2. Set the required options** in `sdkconfig.defaults`:
 
@@ -173,6 +182,8 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`components/libudx`](components/libudx) | Vendored [libudx](https://github.com/holepunchto/libudx) with two bug fixes, plus ESP-IDF glue |
 | [`components/uv_esp`](components/uv_esp) | The libuv subset libudx and hdht need, on lwIP |
 | [`components/hdht_ble`](components/hdht_ble) | SecretStream over BLE GATT (NimBLE) |
+| [`components/hdht_cred`](components/hdht_cred) | Manufacturer credentials checked on the device: a peer's record, its credential, the issuer's revocations |
+| [`components/hdht_ota`](components/hdht_ota) | Firmware updates from a Hypercore over HyperDHT, every block checked on the device against the publisher's signed tree |
 | [`components/zk`](components/zk) | Groth16 verification on alt_bn128 (circom/snarkjs proofs) with vendored [mcl](https://github.com/herumi/mcl), and the camera event format that uses it |
 | [`examples/minimal`](examples/minimal) | Start here: a device reachable by key, NVS identity, cross-task data |
 | [`examples/uart_module`](examples/uart_module) | The C3 as a network module: a host MCU drives it with AT-style commands over a serial line ([command reference](docs/module-uart.md)) |
@@ -181,7 +192,9 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
 | [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, open anchor nodes found by topic lookup (public testnet), nanopayments over HyperDHT |
 | [`packages/boat-peer`](packages/boat-peer) | The app side of BoAT MER for Node.js, Bare and Pear: DID records, signed readings, and a seller that checks every payment |
-| [`packages/wdk-protocol-boat-evm`](packages/wdk-protocol-boat-evm) | BoAT MER devices for Tether's WDK: a WDK EVM account sells to devices, settles their EIP-3009 payments, and serves as an x402 facilitator |
+| [`packages/wdk-protocol-boat-evm`](packages/wdk-protocol-boat-evm) | BoAT MER devices for Tether's WDK: a WDK EVM account sells to devices and settles their EIP-3009 payments, one by one or in batches, also from an ERC-4337 account whose gas an operator sponsors; an x402 facilitator, for devices that sell with x402 too |
+| [`packages/wdk-protocol-boat-solana`](packages/wdk-protocol-boat-solana) | The device as a Solana signer for WDK: it signs its own SPL token (USD₮) transfers with a key derived from its DID, a WDK account pays the fee |
+| [`packages/boat-ota`](packages/boat-ota) | Firmware releases in a Hypercore: publish, seed from any peer, fetch and check the way a device does |
 | [`apps/pear-seller`](apps/pear-seller) | A Pear app that sells to `examples/boat_mer` devices, settles their payments with a WDK account, and keeps the receipts in a Hypercore |
 | [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer, module test peers, credential issuer |
 | [`docs`](docs) | Architecture, protocol notes and the feasibility study |

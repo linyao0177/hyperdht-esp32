@@ -154,6 +154,16 @@ def main(port):
     verdict = issuer('verify', did).strip()
     check('verifier accepts the module', 'VALID valid' in verdict, verdict.split(' id=')[0])
 
+    # the module checks other devices' credentials (components/hdht_cred):
+    # cred-fixture.js publishes a device and issuer for every result
+    fixture = subprocess.run(['node', 'cred-fixture.js', 'public'], cwd=HOST, capture_output=True, text=True).stdout
+    cases = [line.split('|', 1)[1].split() for line in fixture.splitlines() if line.startswith('FIXTURE|')]
+    for name, device_did, issuer_did, expected in cases:
+        m.command(f'AT+CHECK={device_did},{issuer_did}')
+        got = m.wait_event('+CHECK', timeout=90, match=lambda x: device_did in x)
+        result = got.split(',')[1]
+        check(f'AT+CHECK {name}', result == expected, got.split(',', 4)[-1])
+
     # network peer: echo server announced under a topic
     server = peer('serve', 'uart-module-test')
     line = peer_line(server, 'did:mw:')

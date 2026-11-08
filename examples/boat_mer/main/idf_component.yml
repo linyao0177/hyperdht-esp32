@@ -1,4 +1,19 @@
+# hyperdht-esp32's components, from this checkout. In your own project, list
+# tlay/hdht (and tlay/hdht_ble, tlay/zk) with a version instead, or keep
+# override_path pointing at your copy of components/.
 dependencies:
+  tlay/hdht:
+    version: "0.1.0"
+    override_path: "../../../components/hdht"
+  tlay/libudx:
+    version: "0.1.0"
+    override_path: "../../../components/libudx"
+  tlay/hdht_ota:
+    version: "0.1.0"
+    override_path: "../../../components/hdht_ota"
+  tlay/uv_esp:
+    version: "0.1.0"
+    override_path: "../../../components/uv_esp"
   boat-mer:
     git: https://github.com/TLAY-IO/boat-mer.git
     version: v1.0.1

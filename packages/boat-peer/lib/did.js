@@ -6,6 +6,16 @@
 // stored as a HyperDHT mutable record under the DID key (so the DID key signed
 // it), with eth_sig an EIP-191 signature of the DID by the wallet (so the
 // wallet claims the DID). Checking one needs the DID and nothing else.
+//
+// A seller paid to a smart account (an ERC-4337 Safe, say) cannot sign as its
+// payee: a contract has no key. Its record names the payee apart, signed by
+// the account's owner key:
+//
+//   {"v":1,"did","eth":"0x<owner>","pay":"0x<payee>","eth_sig":"0x<65 bytes>"}
+//
+// with eth_sig then an EIP-191 signature of "<did>\npay:<payee, lower case>".
+// A verifier that does not know "pay" recovers another address than eth and
+// refuses the record, so it never pays the owner key by mistake.
 
 const b4a = require('b4a')
 const sodium = require('sodium-universal')
@@ -19,17 +29,29 @@ function keyOf (did) {
   return b4a.from(did.slice(7), 'hex')
 }
 
-function makeRecord (publicKey, ethPrivateKey) {
-  const did = didOf(publicKey)
-  return { v: 1, did, eth: eth.addressOf(ethPrivateKey), eth_sig: eth.signMessage(did, ethPrivateKey) }
+// what eth_sig signs: the DID, and the payee when it is not eth
+function walletMessage (did, pay) {
+  return pay ? did + '\npay:' + String(pay).toLowerCase() : did
 }
+
+function makeRecord (publicKey, ethPrivateKey, { pay } = {}) {
+  const did = didOf(publicKey)
+  const r = { v: 1, did, eth: eth.addressOf(ethPrivateKey) }
+  if (pay) r.pay = pay
+  r.eth_sig = eth.signMessage(walletMessage(did, pay), ethPrivateKey)
+  return r
+}
+
+// the address a record's DID is paid at
+const payeeOf = (record) => record.pay || record.eth
 
 // the record if it belongs to this key and its wallet signed the DID, else null
 function verifyRecord (publicKey, value) {
   try {
     const r = JSON.parse(b4a.toString(value))
     if (r.did !== didOf(publicKey)) return null
-    if (eth.verifyMessage(r.did, r.eth_sig).toLowerCase() !== r.eth.toLowerCase()) return null
+    if (r.pay !== undefined && !/^0x[0-9a-fA-F]{40}$/.test(r.pay)) return null
+    if (eth.verifyMessage(walletMessage(r.did, r.pay), r.eth_sig).toLowerCase() !== r.eth.toLowerCase()) return null
     return r
   } catch {
     return null
@@ -44,8 +66,8 @@ async function resolveDid (dht, did) {
   return { record: verifyRecord(publicKey, res.value), seq: res.seq }
 }
 
-async function publishRecord (dht, keyPair, ethPrivateKey, { seq = Math.floor(Date.now() / 1000) } = {}) {
-  const record = makeRecord(keyPair.publicKey, ethPrivateKey)
+async function publishRecord (dht, keyPair, ethPrivateKey, { seq = Math.floor(Date.now() / 1000), pay } = {}) {
+  const record = makeRecord(keyPair.publicKey, ethPrivateKey, { pay })
   const put = await dht.mutablePut(keyPair, b4a.from(JSON.stringify(record)), { seq })
   return { record, seq, nodes: put.closestNodes.length }
 }
@@ -76,4 +98,4 @@ function verifyRecordVersion (did, version) {
   }
 }
 
-module.exports = { didOf, keyOf, makeRecord, verifyRecord, resolveDid, publishRecord, signRecordVersion, verifyRecordVersion }
+module.exports = { didOf, keyOf, makeRecord, verifyRecord, payeeOf, walletMessage, resolveDid, publishRecord, signRecordVersion, verifyRecordVersion }

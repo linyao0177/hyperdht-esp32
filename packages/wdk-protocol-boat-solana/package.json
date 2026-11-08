@@ -1,0 +1,36 @@
+{
+  "name": "wdk-protocol-boat-solana",
+  "version": "0.1.0",
+  "description": "BoAT MER devices as Solana signers for WDK (Wallet Development Kit) by Tether: the device signs its own SPL token (USD₮) transfers with a key derived from its DID, a WDK account pays the fee",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src"
+  ],
+  "scripts": {
+    "test": "node tests/run.js"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@tetherto/wdk": "1.0.0-beta.22",
+    "@tetherto/wdk-wallet-solana": "1.0.0-beta.20",
+    "hyperdht": "6.35.0"
+  },
+  "dependencies": {
+    "@solana/addresses": "3.0.3",
+    "@solana/codecs": "3.0.3",
+    "@solana/instructions": "3.0.3",
+    "@solana/keys": "3.0.3",
+    "@solana/signers": "3.0.3",
+    "@solana/transaction-messages": "3.0.3",
+    "@solana/transactions": "3.0.3",
+    "b4a": "1.9.0",
+    "boat-peer": "file:../boat-peer",
+    "sodium-universal": "5.0.1"
+  }
+}

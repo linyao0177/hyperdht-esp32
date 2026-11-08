@@ -1,0 +1,9 @@
+version: "0.1.0"
+description: The subset of libuv that libudx and hdht need, on lwIP and FreeRTOS
+url: https://github.com/linyao0177/hyperdht-esp32/tree/main/components/uv_esp
+repository: https://github.com/linyao0177/hyperdht-esp32.git
+license: MIT
+targets:
+  - esp32c3
+dependencies:
+  idf: ">=5.3"

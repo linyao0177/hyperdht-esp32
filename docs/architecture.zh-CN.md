@@ -258,7 +258,8 @@ DHT 不负责准入。任何密钥都能加入网络、宣告自己、发布记�
 |---|---|---|
 | 需要有人运行中继节点 | 随机型 NAT 后面的设备需要一个有公网地址的 blind-relay 节点。设备已能按 topic 找到中继节点并避开失效的节点（[relay-node.md](relay-node.md)），目前有一个公共节点跑在云服务器上，但还需要更多运营者 | 运营者用 [`deploy/`](../deploy) 在公网服务器上运行 `relay-node.js` |
 | 中继只能靠打洞转为直连 | 中继连接在打洞成功后会转为直连，但不会走局域网捷径；对端有公网地址时仍保持走中继 | 在中继旁边同时尝试局域网地址和公网地址 |
-| 准入只能在 JavaScript 里检查 | 制造商凭证和吊销已经可用（[credentials.md](credentials.md)），但设备之间还不能互相检查 | 在 C 里实现同样的检查；大规模设备的吊销列表放进只追加日志 |
+| 吊销列表容量小 | 设备之间已经能用 C 互查凭证（`components/hdht_cred`、`AT+CHECK`），但一条发行方记录只能放约 45 个吊销 id | 吊销列表放进 Hypercore：设备已经能用 C 校验 Hypercore 证明（`components/hdht_ota`） |
+| OTA 还没有回滚 | 设备从一个存放固件版本的 Hypercore 升级，每一块都对照发布者签名的树校验（`components/hdht_ota`、`packages/boat-ota`），但引导程序的回滚没有打开，新固件能启动、之后出问题时不会退回 | 打开 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`（要刷引导程序），新固件通过首轮检查后再确认 |
 | 密钥保护没在芯片上跑过 | 安全启动、flash 加密和 NVS 加密已配置并能编译（[key-protection.md](key-protection.md)），但会烧录 eFuse，所以还没试 | 在备用板上跑一遍，包括签名的 OTA 升级 |
 | 不支持密钥轮换 | 换密钥就换了 DID | 签名的“迁移到”记录，或在 DID 记录里加入 controller 密钥 |
 | 不能列出设备 | DHT 只能按公钥查 | 在记录之上建索引，例如由发行方写入的 Hypercore/Hyperbee 日志 |

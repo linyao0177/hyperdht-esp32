@@ -29,10 +29,12 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_netif.h"
+#include "esp_netif_sntp.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -40,6 +42,8 @@
 #include "protocol_examples_common.h"
 
 #include "boat_attest.h"
+#include "hdht_ota.h"
+#include "esp_app_desc.h"
 #include "boat_buyer_nanopay.h"
 #include "boat_crypto.h"
 #include "hdht.h"
@@ -90,7 +94,7 @@ log_heap (const char *at) {
 // keccak256("\x19Ethereum Signed Message:\n" + len + msg), as personal_sign
 static void
 eip191_digest (const char *msg, uint8_t out[32]) {
-  char buf[128];
+  char buf[192]; // up to a record's "<did>\npay:<payee>"
   int n = snprintf(buf, sizeof(buf), "\x19"
                                      "Ethereum Signed Message:\n%u%s",
                    (unsigned) strlen(msg), msg);
@@ -139,13 +143,27 @@ verify_record (const uint8_t public_key[32], const uint8_t *value, size_t len, u
   if (!json_str(json, "did", did, sizeof(did)) || strcmp(did, expected) != 0) return false;
   if (!json_str(json, "eth", eth_hex, sizeof(eth_hex)) || !json_str(json, "eth_sig", sig_hex, sizeof(sig_hex))) return false;
 
+  // a seller paid to a smart account names it in "pay", and eth_sig, by the
+  // owner key in "eth", signs "<did>\npay:<payee, lower case>" (packages/boat-peer/lib/did.js)
+  char pay_hex[48], message[128];
+  uint8_t pay[20];
+  bool has_pay = json_str(json, "pay", pay_hex, sizeof(pay_hex));
+  if (has_pay) {
+    if (strlen(pay_hex) != 42 || boat_hex_to_bytes(pay_hex, pay, 20) != 20) return false;
+    char lower[41];
+    sodium_bin2hex(lower, sizeof(lower), pay, 20);
+    snprintf(message, sizeof(message), "%s\npay:0x%s", did, lower);
+  } else {
+    snprintf(message, sizeof(message), "%s", did);
+  }
+
   uint8_t sig[65], claimed[20], recovered[20], digest[32];
   if (boat_hex_to_bytes(eth_hex, claimed, 20) != 20 || boat_hex_to_bytes(sig_hex, sig, 65) != 65) return false;
-  eip191_digest(did, digest);
+  eip191_digest(message, digest);
   if (boat_secp256k1_ecrecover(digest, sig, recovered) != BOAT_OK) return false;
   if (memcmp(recovered, claimed, 20) != 0) return false;
 
-  memcpy(eth, claimed, 20);
+  memcpy(eth, has_pay ? pay : claimed, 20); // the payee
   return true;
 }
 
@@ -188,6 +206,33 @@ publish_record (void) {
 
 // server: answer a DID dial with an attested reading
 
+// the reading, attested by MER (SHA-256 + Ed25519): its length, or 0
+int
+attested_reading (char *msg, size_t cap) {
+  unsigned long long uptime = esp_timer_get_time() / 1000000;
+  unsigned heap = (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT);
+  char payload[96];
+  snprintf(payload, sizeof(payload), "{\"uptime_s\":%llu,\"free_heap\":%u}", uptime, heap);
+
+  boat_attestation_t att;
+  int64_t t0 = esp_timer_get_time();
+  boat_err_t err = boat_attest_create(&kp, payload, &att);
+  long sign_ms = (long) ((esp_timer_get_time() - t0) / 1000);
+  if (err != BOAT_OK) {
+    printf("MER|attest failed %d\n", err);
+    return 0;
+  }
+
+  char hash_hex[65], sig_hex[129];
+  sodium_bin2hex(hash_hex, sizeof(hash_hex), att.hash, 32);
+  sodium_bin2hex(sig_hex, sizeof(sig_hex), att.signature, 64);
+
+  // the payload again, escaped as a JSON string, so its exact bytes can be hashed
+  int n = snprintf(msg, cap, "{\"did\":\"%s\",\"eth\":\"%s\",\"payload\":\"{\\\"uptime_s\\\":%llu,\\\"free_heap\\\":%u}\",\"hash\":\"%s\",\"sig\":\"%s\",\"timestamp\":%u,\"sign_ms\":%ld}", kp.did, kp.eth_addr_hex, uptime, heap, hash_hex, sig_hex, (unsigned) att.timestamp, sign_ms);
+  printf("MER|attest sign_ms=%ld\n", sign_ms);
+  return n > 0 && (size_t) n < cap ? n : 0;
+}
+
 static void
 on_peer_close (hdht_stream_t *stream, int error) {
   (void) stream;
@@ -206,29 +251,12 @@ on_peer_connection (hdht_server_t *s, hdht_stream_t *stream) {
   }
   stream->on_close = on_peer_close;
 
-  unsigned long long uptime = esp_timer_get_time() / 1000000;
-  unsigned heap = (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT);
-  char payload[96];
-  snprintf(payload, sizeof(payload), "{\"uptime_s\":%llu,\"free_heap\":%u}", uptime, heap);
-
-  boat_attestation_t att;
-  int64_t t0 = esp_timer_get_time();
-  boat_err_t err = boat_attest_create(&kp, payload, &att);
-  long sign_ms = (long) ((esp_timer_get_time() - t0) / 1000);
-  if (err != BOAT_OK) {
-    printf("MER|attest failed %d\n", err);
+  static char msg[640];
+  int n = attested_reading(msg, sizeof(msg));
+  if (n <= 0) {
     hdht_stream_end(stream);
     return;
   }
-
-  char hash_hex[65], sig_hex[129];
-  sodium_bin2hex(hash_hex, sizeof(hash_hex), att.hash, 32);
-  sodium_bin2hex(sig_hex, sizeof(sig_hex), att.signature, 64);
-
-  // the payload again, escaped as a JSON string, so its exact bytes can be hashed
-  char msg[640];
-  int n = snprintf(msg, sizeof(msg), "{\"did\":\"%s\",\"eth\":\"%s\",\"payload\":\"{\\\"uptime_s\\\":%llu,\\\"free_heap\\\":%u}\",\"hash\":\"%s\",\"sig\":\"%s\",\"timestamp\":%u,\"sign_ms\":%ld}", kp.did, kp.eth_addr_hex, uptime, heap, hash_hex, sig_hex, (unsigned) att.timestamp, sign_ms);
-  printf("MER|attest sign_ms=%ld\n", sign_ms);
   hdht_stream_write(stream, (const uint8_t *) msg, n);
   hdht_stream_end(stream);
 }
@@ -402,6 +430,22 @@ resolve_seller (void) {
   if (hdht_mutable_get(&dht, seller_key, 0, on_seller_record, NULL) != 0) seller_busy = false;
 }
 
+// firmware updates from a Hypercore (CONFIG_MER_OTA_CORE), served by CONFIG_MER_OTA_SERVER
+static void
+ota_start (hdht_t *d) {
+  static hdht_ota_config_t ota = {.interval_s = CONFIG_MER_OTA_INTERVAL_S};
+  ota.name = CONFIG_MER_OTA_NAME[0] ? CONFIG_MER_OTA_NAME : esp_app_get_description()->project_name;
+  if (strlen(CONFIG_MER_OTA_CORE) != 64 || strlen(CONFIG_MER_OTA_SIGNER) != 64 || strlen(CONFIG_MER_OTA_SERVER) != 64 ||
+      sodium_hex2bin(ota.key, 32, CONFIG_MER_OTA_CORE, 64, NULL, NULL, NULL) != 0 ||
+      sodium_hex2bin(ota.signer, 32, CONFIG_MER_OTA_SIGNER, 64, NULL, NULL, NULL) != 0 ||
+      sodium_hex2bin(ota.server, 32, CONFIG_MER_OTA_SERVER, 64, NULL, NULL, NULL) != 0) {
+    return;
+  }
+  static bool started;
+  if (!started) hdht_ota_start(d, &ota);
+  started = true;
+}
+
 // once a second: the engine's watchdog and power self-drive, reconnects, heap log
 static void
 on_tick (uv_timer_t *t) {
@@ -412,6 +456,7 @@ on_tick (uv_timer_t *t) {
   if (++ticks % 30 == 0) log_heap("tick");
   if (ticks % RECORD_REPUBLISH_S == 0) publish_record();
   anchor_tick(ticks);
+  hdht_ota_tick();
 }
 
 static void
@@ -419,6 +464,8 @@ on_ready (hdht_t *d, int status) {
   printf("MER|bootstrapped status=%d nodes=%u\n", status, d->table_len);
   hdht_listen(d, &server, kp.ed25519_pk, kp.ed25519_sk, on_peer_connection, on_listening, NULL);
   publish_record(); // the buyer starts once it is out
+  if (status == 0) hdht_ota_confirm(); // an updated image that gets this far stays
+  ota_start(d);
 }
 
 static void
@@ -495,6 +542,11 @@ hdht_task (void *arg) {
   uv_run(&loop, UV_RUN_DEFAULT);
 }
 
+static void
+on_clock (struct timeval *tv) {
+  printf("MER|clock set by SNTP: %lld\n", (long long) tv->tv_sec);
+}
+
 void
 app_main (void) {
   esp_err_t err = nvs_flash_init();
@@ -509,6 +561,13 @@ app_main (void) {
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   ESP_ERROR_CHECK(example_connect());
 
+  // wall-clock time, for everything that checks an EIP-3009 validity window
+  // (the owner's signer, x402 selling and buying); synced in the background
+  esp_sntp_config_t sntp = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+  sntp.sync_cb = on_clock;
+  esp_netif_sntp_init(&sntp);
+
   xTaskCreate(hdht_task, "hdht", CONFIG_MER_TASK_STACK, NULL, 5, NULL);
   x402_start();
+  x402_sell_start();
 }

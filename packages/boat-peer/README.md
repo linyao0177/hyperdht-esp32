@@ -30,13 +30,15 @@ swarm.on('connection', (conn) => seller.serve(conn, swarm.dht))
 | `resolveDid(dht, did)` | Reads the DID record from the DHT. Returns `{ record, seq }`, with `record` null when it is not valid, or null when there is none |
 | `verifyRecord(publicKey, value)` | A record is valid when its `did` is the key it is stored under (the DHT checks that the key signed it) and its `eth_sig`, an EIP-191 signature of the DID, recovers to its `eth` |
 | `signRecordVersion(keyPair, record, seq)`, `verifyRecordVersion(did, version)` | A record version signed by the DID key, for logs that must outlive the DHT's latest record: a receipt can be checked against the record that was current when it was paid |
-| `makeRecord(publicKey, ethPrivateKey)`, `publishRecord(dht, keyPair, ethPrivateKey)` | Make and publish a record for your own DID, so devices can check who they pay |
+| `makeRecord(publicKey, ethPrivateKey, { pay })`, `publishRecord(dht, keyPair, ethPrivateKey, { pay })` | Make and publish a record for your own DID, so devices can check who they pay. With `pay`, the record names a payee other than the signing key, a smart account for example: `eth_sig` then signs `"<did>\npay:<payee>"`, so the owner key vouches for it, and a verifier that does not know `pay` refuses the record |
+| `payeeOf(record)` | The address a DID is paid at: `pay` if the record has one, else `eth` |
+| `new OwnerChannel({ dht, did, keyPair })` | A device's owner channel (`CONFIG_MER_OWNER_KEY`): `open()`, then `request({ op, ... })` for JSON answers. The device signers in [wdk-protocol-boat-evm](../wdk-protocol-boat-evm) and [wdk-protocol-boat-solana](../wdk-protocol-boat-solana) use it |
 | `dialReading(dht, did, { record })` | Connects to the device, reads its one message, and returns `{ ok, checks, reading, openMs }`. Checks: the stream's peer is the DID, the hash matches the payload, the Ed25519 signature is the DID's, and the wallet matches the record |
 | `verifyReading(did, message, { remotePublicKey, record })` | The same checks on a reading you already hold |
-| `new Seller({ payee, domain, token, rate, sliceMs, maxSession, powerRange, power })` | A seller for MER's 0xEE00 protocol. `seller.serve(conn, dht)` serves one buyer on a stream |
+| `new Seller({ payee, domain, token, rate, sliceMs, maxSession, powerRange, power, settle })` | A seller for MER's 0xEE00 protocol. `seller.serve(conn, dht)` serves one buyer on a stream. `settle: 'session'` asks for session settlement (a BoAT MER buyer with [patches/boat-mer](../../patches/boat-mer) 0002): one nonce per session, the buyer signs the running total, and the `session` event hands over the one authorization to settle |
 | `eth` | `signMessage`, `verifyMessage` (EIP-191), `signTransfer`, `verifyTransfer` (EIP-712 TransferWithAuthorization), `addressOf`, `checksum` |
 
-The seller's events: `buyer`, `record` (the buyer's DID record, once read), `open` and `end` (a paying session), `slice` (a bill sent), `payment`, `close`. A `payment` carries `ok`, and when it is false a `reason`:
+The seller's events: `buyer`, `record` (the buyer's DID record, once read), `open` and `end` (a paying session), `slice` (a bill sent), `payment`, `session` (session settlement: `{ authorization, total, slices }` when a session ends), `close`. A `payment` carries `ok`, and when it is false a `reason`:
 
 | Reason | |
 |---|---|
@@ -58,7 +60,7 @@ Each stream message carries one GATT operation of MER's 0xEE00 service, with the
 npm install && npm test
 ```
 
-`npm test` runs `test/run.js` in Node.js and then in Bare: 38 checks each. The signatures must match ethers byte for byte (`test/vectors.json`, made by `test/gen-vectors.js`). A buyer on an in-memory stream signs the way MER's buyer does, and the seller must accept three slices, and refuse another wallet and another payee.
+`npm test` runs `test/run.js` in Node.js and then in Bare: 47 checks each. The signatures must match ethers byte for byte (`test/vectors.json`, made by `test/gen-vectors.js`). A buyer on an in-memory stream signs the way MER's buyer does, and the seller must accept three slices, and refuse another wallet and another payee.
 
 ## Bare
 

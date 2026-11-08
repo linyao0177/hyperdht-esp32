@@ -1,0 +1,353 @@
+From 804a18f9b5338765171b77b60710b1f588c3f851 Mon Sep 17 00:00:00 2001
+From: linyao01 <linyao01@gmail.com>
+Date: Sat, 7 Nov 2026 17:01:58 +0800
+Subject: [PATCH 1/2] fix(pay): sign under a per-call EIP-712 domain, not the
+ global one
+
+boat_nano_sign, the x402 client and attestation's x402 path each set the
+global domain separator and then signed with it. On a device where the
+nanopayment buyer, anchoring and x402 run on different tasks, one task
+could sign under another's domain. tests/test_domain_race.c, two threads
+signing under a Gateway and a token domain, got 1 of 800 signatures
+wrong in each of three runs before this change and 0 after it.
+
+- boat_pay_authorize_ext(kp, params, chain_id, contract, name, version,
+  sig): computes the domain separator per call, touches no global
+- boat_nano_sign, the x402 V2 client and attestation's x402 V2 path use
+  it, and no longer set the global domain
+- boat_pay_authorize copies the global domain before using it; it stays
+  for callers that set the domain themselves (x402 V1)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ CMakeLists.txt           |  5 +++
+ include/boat_nano.h      |  4 +--
+ include/boat_pay.h       | 16 +++++++++
+ src/attest/boat_attest.c | 19 ++++++----
+ src/nano/boat_nano.c     | 12 +++----
+ src/pay/boat_pay.c       | 58 ++++++++++++++++++++++++------
+ src/x402/boat_x402_pay.c | 15 ++++----
+ tests/test_domain_race.c | 76 ++++++++++++++++++++++++++++++++++++++++
+ 8 files changed, 172 insertions(+), 33 deletions(-)
+ create mode 100644 tests/test_domain_race.c
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index dedc51c..630e615 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -190,6 +190,11 @@ else()
+         third_party/tweetnacl
+         third_party/micro-ecc
+     )
++
++    # two threads signing under different EIP-712 domains at once
++    find_package(Threads REQUIRED)
++    add_executable(test_domain_race tests/test_domain_race.c)
++    target_link_libraries(test_domain_race PRIVATE boat_mer OpenSSL::Crypto curl Threads::Threads)
+     endif()
+ 
+ 
+diff --git a/include/boat_nano.h b/include/boat_nano.h
+index d11b659..5fb1c8f 100644
+--- a/include/boat_nano.h
++++ b/include/boat_nano.h
+@@ -53,8 +53,8 @@ typedef struct {
+ /*
+  * Buyer: Sign an EIP-3009 TransferWithAuthorization.
+  *
+- * EIP-712 domain must be configured first via boat_pay_set_domain() or
+- * boat_pay_set_domain_ext().
++ * Signs under the domain given here (domain_name, domain_version, chain_id,
++ * contract_addr) and leaves the global domain of boat_pay_set_domain*() alone.
+  *
+  * kp:             BoAT keypair (secp256k1 used for signing)
+  * to:             recipient address (20 bytes)
+diff --git a/include/boat_pay.h b/include/boat_pay.h
+index cd8f9ca..a325f3e 100644
+--- a/include/boat_pay.h
++++ b/include/boat_pay.h
+@@ -31,11 +31,27 @@ boat_err_t boat_pay_set_domain_ext(uint32_t chain_id,
+  * Sign an EIP-3009 TransferWithAuthorization.
+  * Computes EIP-712 typed data hash and signs with secp256k1.
+  * sig[65] = r(32) + s(32) + v(1).
++ *
++ * Uses the domain set by boat_pay_set_domain*(), which is one global: not
++ * safe when several tasks sign under different domains. Prefer
++ * boat_pay_authorize_ext(), which takes the domain per call.
+  */
+ boat_err_t boat_pay_authorize(const boat_keypair_t *kp,
+                               const boat_payment_t *params,
+                               uint8_t sig[65]);
+ 
++/*
++ * Sign an EIP-3009 TransferWithAuthorization under the given EIP-712 domain.
++ * Touches no global state, so tasks may sign under different domains at once.
++ */
++boat_err_t boat_pay_authorize_ext(const boat_keypair_t *kp,
++                                  const boat_payment_t *params,
++                                  uint32_t chain_id,
++                                  const uint8_t contract[20],
++                                  const char *name,
++                                  const char *version,
++                                  uint8_t sig[65]);
++
+ /*
+  * Submit signed payment authorization to the relay.
+  * POST {relay_url}/v1/payment/execute
+diff --git a/src/attest/boat_attest.c b/src/attest/boat_attest.c
+index 2f3b14c..6adebf5 100644
+--- a/src/attest/boat_attest.c
++++ b/src/attest/boat_attest.c
+@@ -436,11 +436,7 @@ boat_err_t boat_attest_submit_paid(const boat_config_t *cfg,
+ 
+                 /* Configure EIP-712 domain for Gateway */
+                 if (cached_req->verifying_contract[0]) {
+-                    uint8_t gw_contract[20];
+-                    boat_hex_to_bytes(cached_req->verifying_contract, gw_contract, 20);
+-                    boat_pay_set_domain_ext(cached_req->chain_id, gw_contract,
+-                                            cached_req->domain_name,
+-                                            cached_req->domain_version);
++                    /* used per call when signing, below */
+                     boat_pal_log(2, "BOAT", "x402 V2: domain=%s/%s chain=%" PRIu32,
+                                  cached_req->domain_name, cached_req->domain_version,
+                                  cached_req->chain_id);
+@@ -487,9 +483,18 @@ boat_err_t boat_attest_submit_paid(const boat_config_t *cfg,
+     /* Random nonce */
+     boat_pal_random(pay.nonce, 32);
+ 
+-    /* Sign */
++    /* Sign, under the domain the server named (V2) without touching the
++     * global one, or the app's domain (V1) */
+     uint8_t sig[65];
+-    boat_err_t err = boat_pay_authorize(kp, &pay, sig);
++    boat_err_t err;
++    if (cached_req->verifying_contract[0]) {
++        uint8_t contract[20];
++        boat_hex_to_bytes(cached_req->verifying_contract, contract, 20);
++        err = boat_pay_authorize_ext(kp, &pay, cached_req->chain_id, contract,
++                                     cached_req->domain_name, cached_req->domain_version, sig);
++    } else {
++        err = boat_pay_authorize(kp, &pay, sig);
++    }
+     if (err != BOAT_OK) {
+         boat_pal_log(0, "BOAT", "EIP-3009 signing failed: %d", err);
+         free(body); free(url);
+diff --git a/src/nano/boat_nano.c b/src/nano/boat_nano.c
+index 94cdc31..5bbc1a2 100644
+--- a/src/nano/boat_nano.c
++++ b/src/nano/boat_nano.c
+@@ -74,15 +74,11 @@ boat_err_t boat_nano_sign(const boat_keypair_t *kp,
+     pay.valid_before = out->valid_before;
+     memcpy(pay.nonce, out->nonce, 32);
+ 
+-    /* Configure EIP-712 domain */
+-    boat_err_t err = boat_pay_set_domain_ext(chain_id, contract_addr,
+-                                              domain_name, domain_version);
+-    if (err != BOAT_OK)
+-        return err;
+-
+-    /* Sign */
++    /* Sign under this call's domain, not the global one: the buyer, anchoring
++     * and x402 may sign on different tasks under different domains */
+     uint8_t sig[65];
+-    err = boat_pay_authorize(kp, &pay, sig);
++    boat_err_t err = boat_pay_authorize_ext(kp, &pay, chain_id, contract_addr,
++                                            domain_name, domain_version, sig);
+     if (err != BOAT_OK)
+         return err;
+ 
+diff --git a/src/pay/boat_pay.c b/src/pay/boat_pay.c
+index 1caef0a..8114792 100644
+--- a/src/pay/boat_pay.c
++++ b/src/pay/boat_pay.c
+@@ -22,17 +22,17 @@ const uint8_t *boat_eip712_get_domain_separator(void);
+ 
+ /* boat_pay_set_domain is implemented in boat_eip712.c */
+ 
+-boat_err_t boat_pay_authorize(const boat_keypair_t *kp,
+-                              const boat_payment_t *params,
+-                              uint8_t sig[65])
++boat_err_t boat_eip712_domain_separator_ext(uint32_t chain_id,
++                                            const uint8_t contract[20],
++                                            const char *name, size_t name_len,
++                                            const char *version, size_t version_len,
++                                            uint8_t out[32]);
++
++static boat_err_t authorize_with(const boat_keypair_t *kp,
++                                 const boat_payment_t *params,
++                                 const uint8_t domain_sep[32],
++                                 uint8_t sig[65])
+ {
+-    if (!kp || !params || !sig)
+-        return BOAT_ERR_INVALID_ARG;
+-
+-    const uint8_t *domain_sep = boat_eip712_get_domain_separator();
+-    if (!domain_sep)
+-        return BOAT_ERR_NOT_INITIALIZED;
+-
+     /* Compute structHash for TransferWithAuthorization */
+     uint8_t struct_hash[32];
+     boat_err_t err = boat_eip712_transfer_auth_hash(kp->eth_address, params, struct_hash);
+@@ -49,6 +49,44 @@ boat_err_t boat_pay_authorize(const boat_keypair_t *kp,
+     return boat_secp256k1_sign(kp, digest, sig);
+ }
+ 
++boat_err_t boat_pay_authorize(const boat_keypair_t *kp,
++                              const boat_payment_t *params,
++                              uint8_t sig[65])
++{
++    if (!kp || !params || !sig)
++        return BOAT_ERR_INVALID_ARG;
++
++    const uint8_t *global = boat_eip712_get_domain_separator();
++    if (!global)
++        return BOAT_ERR_NOT_INITIALIZED;
++
++    /* copy it first: another task may set a new domain while this one signs */
++    uint8_t domain_sep[32];
++    memcpy(domain_sep, global, 32);
++    return authorize_with(kp, params, domain_sep, sig);
++}
++
++boat_err_t boat_pay_authorize_ext(const boat_keypair_t *kp,
++                                  const boat_payment_t *params,
++                                  uint32_t chain_id,
++                                  const uint8_t contract[20],
++                                  const char *name,
++                                  const char *version,
++                                  uint8_t sig[65])
++{
++    if (!kp || !params || !contract || !name || !version || !sig)
++        return BOAT_ERR_INVALID_ARG;
++
++    uint8_t domain_sep[32];
++    boat_err_t err = boat_eip712_domain_separator_ext(chain_id, contract,
++                                                      name, strlen(name),
++                                                      version, strlen(version),
++                                                      domain_sep);
++    if (err != BOAT_OK)
++        return err;
++    return authorize_with(kp, params, domain_sep, sig);
++}
++
+ boat_err_t boat_pay_submit(const boat_config_t *cfg,
+                            const boat_payment_t *pay,
+                            const uint8_t sig[65])
+diff --git a/src/x402/boat_x402_pay.c b/src/x402/boat_x402_pay.c
+index 2cd8b48..c7ab8d4 100644
+--- a/src/x402/boat_x402_pay.c
++++ b/src/x402/boat_x402_pay.c
+@@ -225,12 +225,7 @@ static int parse_402_response(const char *response,
+                             &req->max_timeout_seconds) < 0)
+             req->max_timeout_seconds = BOAT_MIN_AUTH_VALIDITY_SECS;
+ 
+-        if (req->verifying_contract[0]) {
+-            uint8_t gw_contract[20];
+-            boat_hex_to_bytes(req->verifying_contract, gw_contract, 20);
+-            boat_pay_set_domain_ext(req->chain_id, gw_contract,
+-                                    req->domain_name, req->domain_version);
+-        }
++        /* the domain is used per call when signing (sign_payment) */
+     } else {
+         req->nanopayment = 0;
+         req->chain_id = 137;
+@@ -263,6 +258,14 @@ static boat_err_t sign_payment(const boat_keypair_t *kp,
+ 
+     boat_pal_random(pay_out->nonce, 32);
+ 
++    /* x402 V2 names its domain: sign under it without touching the global
++     * one; V1 uses the domain the app set with boat_pay_set_domain*() */
++    if (req->verifying_contract[0]) {
++        uint8_t contract[20];
++        boat_hex_to_bytes(req->verifying_contract, contract, 20);
++        return boat_pay_authorize_ext(kp, pay_out, req->chain_id, contract,
++                                      req->domain_name, req->domain_version, sig_out);
++    }
+     return boat_pay_authorize(kp, pay_out, sig_out);
+ }
+ 
+diff --git a/tests/test_domain_race.c b/tests/test_domain_race.c
+new file mode 100644
+index 0000000..1af29e1
+--- /dev/null
++++ b/tests/test_domain_race.c
+@@ -0,0 +1,76 @@
++/*
++ * SPDX-License-Identifier: Apache-2.0
++ * Copyright 2024-2026 BoAT MER Contributors
++ *
++ * Two threads sign EIP-3009 authorizations at the same time, each under its
++ * own EIP-712 domain (a Circle Gateway batched domain and a token domain),
++ * as a device does when its nanopayment buyer, its anchoring and its x402
++ * client run on different tasks. Signing is deterministic (RFC 6979), so
++ * every signature must equal the one the same call makes alone.
++ *
++ * Build: see tests/Makefile (needs pthreads).
++ */
++
++#include <pthread.h>
++#include <stdio.h>
++#include <string.h>
++
++#include "boat_crypto.h"
++#include "boat_nano.h"
++
++#define ROUNDS 400
++
++static boat_keypair_t kp;
++static uint8_t to[20] = {0x27, 0xf3};
++static uint8_t gateway[20] = {0x00, 0x77, 0x77};
++static uint8_t token[20] = {0x36};
++
++typedef struct {
++    const char *name, *version;
++    const uint8_t *contract;
++    uint8_t expected[ROUNDS][32];
++    int wrong;
++} job_t;
++
++static void
++sign_one(job_t *j, int i, uint8_t r_out[32])
++{
++    boat_nano_slice_t slice = {.slice_id = (uint32_t)i, .valid_after = 0, .valid_before = 1900000000u};
++    memset(slice.nonce, i & 0xff, 32);
++    slice.nonce[0] = (uint8_t)(i >> 8);
++    boat_nano_auth_t auth;
++    boat_nano_sign(&kp, to, 1000 + (uint64_t)i, 5042002, j->contract, j->name, j->version, &slice, &auth);
++    memcpy(r_out, auth.r, 32);
++}
++
++static void *
++run(void *arg)
++{
++    job_t *j = arg;
++    for (int i = 0; i < ROUNDS; i++) {
++        uint8_t r[32];
++        sign_one(j, i, r);
++        if (memcmp(r, j->expected[i], 32) != 0) j->wrong++;
++    }
++    return NULL;
++}
++
++int
++main(void)
++{
++    if (boat_crypto_init(&kp) != BOAT_OK) return 1;
++    job_t a = {.name = "GatewayWalletBatched", .version = "1", .contract = gateway};
++    job_t b = {.name = "USDC", .version = "2", .contract = token};
++    for (int i = 0; i < ROUNDS; i++) {
++        sign_one(&a, i, a.expected[i]);
++        sign_one(&b, i, b.expected[i]);
++    }
++    pthread_t ta, tb;
++    pthread_create(&ta, NULL, run, &a);
++    pthread_create(&tb, NULL, run, &b);
++    pthread_join(ta, NULL);
++    pthread_join(tb, NULL);
++    printf("%s concurrent signing under two domains: %d + %d of %d signatures wrong\n",
++           a.wrong + b.wrong ? "FAIL" : "PASS", a.wrong, b.wrong, 2 * ROUNDS);
++    return a.wrong + b.wrong ? 1 : 0;
++}
+-- 
+2.49.0
+

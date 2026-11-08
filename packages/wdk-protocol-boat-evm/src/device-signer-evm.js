@@ -16,7 +16,7 @@
 
 import boatPeer from 'boat-peer'
 
-const { keyOf, didOf, eth } = boatPeer
+const { OwnerChannel, eth } = boatPeer
 
 class UnsupportedOperationError extends Error {
   constructor (operation, why) {
@@ -29,15 +29,9 @@ export default class BoatDeviceSignerEvm {
   // dht: a HyperDHT (or a Hyperswarm's swarm.dht); did: the device's DID;
   // keyPair: the owner's Ed25519 key pair, the one the device trusts
   constructor ({ dht, did, keyPair, timeout = 60000 }) {
-    this._dht = dht
-    this._deviceKey = keyOf(did)
-    this._keyPair = keyPair
-    this._timeout = timeout
-    this._conn = null
-    this._pending = new Map()
-    this._nextId = 1
+    this._channel = new OwnerChannel({ dht, did, keyPair, timeout })
+    this._did = this._channel.did
     this._address = null
-    this._did = didOf(this._deviceKey)
   }
 
   static async connect (options) {
@@ -47,59 +41,14 @@ export default class BoatDeviceSignerEvm {
   }
 
   async open () {
-    const conn = this._dht.connect(this._deviceKey, { keyPair: this._keyPair })
-    this._conn = conn
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('device did not answer')), this._timeout)
-      conn.once('open', () => { clearTimeout(timer); resolve() })
-      conn.once('error', (err) => { clearTimeout(timer); reject(err) })
-    })
-    conn.on('data', (data) => this._ondata(data))
-    conn.on('error', () => {})
-    conn.on('close', () => {
-      for (const { reject } of this._pending.values()) reject(new Error('the device closed the connection'))
-      this._pending.clear()
-    })
+    await this._channel.open()
     const res = await this._request({ op: 'address' })
     if (res.did !== this._did) throw new Error('the device answered with another DID')
     this._address = eth.checksum(Buffer.from(res.address.slice(2), 'hex'))
   }
 
-  _ondata (data) {
-    let res
-    try {
-      res = JSON.parse(data.toString())
-    } catch {
-      // not a signer answer: the device sent an attested reading, so it does
-      // not take this key as its owner
-      for (const { reject } of this._pending.values()) reject(new Error('the device does not accept this key as its owner'))
-      this._pending.clear()
-      return
-    }
-    const p = this._pending.get(res.id)
-    if (!p) {
-      if (res.payload !== undefined) {
-        for (const { reject } of this._pending.values()) reject(new Error('the device does not accept this key as its owner'))
-        this._pending.clear()
-      }
-      return
-    }
-    this._pending.delete(res.id)
-    clearTimeout(p.timer)
-    if (res.ok) p.resolve(res)
-    else p.reject(new Error('the device refused: ' + res.error))
-  }
-
   _request (body) {
-    const id = String(this._nextId++)
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this._pending.delete(id)
-        reject(new Error('the device did not answer in time'))
-      }, this._timeout)
-      this._pending.set(id, { resolve, reject, timer })
-      this._conn.write(Buffer.from(JSON.stringify({ id, ...body })))
-    })
+    return this._channel.request(body)
   }
 
   get isDerivable () { return false }
@@ -157,7 +106,6 @@ export default class BoatDeviceSignerEvm {
   }
 
   dispose () {
-    if (this._conn) this._conn.end()
-    this._conn = null
+    this._channel.close()
   }
 }

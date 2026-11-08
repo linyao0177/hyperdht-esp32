@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
-# In your own project, point this at the components/ directory of hyperdht-esp32.
+# hyperdht-esp32's components come in through main/idf_component.yml.
 # protocol_examples_common is here only for its WiFi settings, the default
 # network until the host sets one with AT+WIFI.
 set(EXTRA_COMPONENT_DIRS
   $ENV{IDF_PATH}/examples/common_components/protocol_examples_common
-  ${CMAKE_CURRENT_LIST_DIR}/../../components
 )
 
 # WiFi credentials: the repo root's gitignored sdkconfig.wifi (see sdkconfig.wifi.example)

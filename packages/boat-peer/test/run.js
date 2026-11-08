@@ -10,7 +10,7 @@
 const b4a = require('b4a')
 const sodium = require('sodium-universal')
 const EventEmitter = require('bare-events')
-const { eth, didOf, makeRecord, verifyRecord, verifyReading, sha256, Seller, frame, OP, CHR, signRecordVersion, verifyRecordVersion } = require('..')
+const { eth, didOf, makeRecord, verifyRecord, payeeOf, verifyReading, sha256, Seller, frame, OP, CHR, signRecordVersion, verifyRecordVersion } = require('..')
 const vectors = require('./vectors.json')
 
 const runtime = typeof Bare !== 'undefined' ? 'bare' : 'node' // eslint-disable-line no-undef
@@ -74,6 +74,16 @@ async function main () {
   check('record version signed by another key is refused', verifyRecordVersion(record.did, signRecordVersion(ed25519(2), record, 7)) === null)
   check('record version claiming another wallet is refused', verifyRecordVersion(record.did, signRecordVersion(device, otherWallet, 7)) === null)
 
+  // a record paying a smart account, the owner key vouching for it
+  const safe = '0x97682ff1A980a96D65Ea606b717441E3662c557E'
+  const paying = makeRecord(device.publicKey, deviceEth, { pay: safe })
+  const payingValue = b4a.from(JSON.stringify(paying))
+  check('record with a payee verifies, paid at the payee', verifyRecord(device.publicKey, payingValue) !== null && payeeOf(paying) === safe && payeeOf(record) === record.eth)
+  check('record with its payee changed is refused', verifyRecord(device.publicKey, b4a.from(JSON.stringify({ ...paying, pay: '0x' + '11'.repeat(20) }))) === null)
+  check('record with its payee dropped is refused', verifyRecord(device.publicKey, b4a.from(JSON.stringify({ ...paying, pay: undefined }))) === null)
+  check('record with a payee signed as a plain one is refused', verifyRecord(device.publicKey, b4a.from(JSON.stringify({ ...record, pay: safe }))) === null)
+  check('record with a malformed payee is refused', verifyRecord(device.publicKey, b4a.from(JSON.stringify({ ...paying, pay: 'nobody' }))) === null)
+
   // attested readings, made the way the device makes them
   const payload = JSON.stringify({ power_w: 12.0, t: 1793720788 })
   const hash = sha256(payload)
@@ -89,16 +99,20 @@ async function main () {
   // the seller, with a buyer that signs like MER's
   const sellerEth = key(vectors.messages[2].key)
   const payee = eth.addressOf(sellerEth)
-  const seller = new Seller({ payee, domain: vectors.domain, token: '0x3600000000000000000000000000000000000000', rate: 250000, sliceMs: 300, power: () => 1200 })
+  const sellerA = new Seller({ payee, domain: vectors.domain, token: '0x3600000000000000000000000000000000000000', rate: 250000, sliceMs: 300, power: () => 1200 })
   const records = new Map([[b4a.toString(device.publicKey, 'hex'), value]])
   const dht = { mutableGet: async (k) => records.has(b4a.toString(k, 'hex')) ? { value: records.get(b4a.toString(k, 'hex')), seq: 1 } : null }
 
-  async function session (buyerEthKey, { slices = 3, payTo = null } = {}) {
+  async function session (buyerEthKey, { slices = 3, payTo = null, seller = sellerA, cumulative = null } = {}) {
     const [sellerSide, buyerSide] = pair(ed25519(9).publicKey, device.publicKey)
     const payments = []
+    const sessions = []
     const onPayment = (p) => payments.push(p)
+    const onSession = (e) => sessions.push(e)
     seller.on('payment', onPayment)
+    seller.on('session', onSession)
     seller.serve(sellerSide, dht)
+    let total = 0n
     await new Promise((resolve) => setTimeout(resolve, 20)) // record lookup
     let offer = null
     let n = 0
@@ -109,10 +123,13 @@ async function main () {
         if (uuid16 === CHR.STREAM_OFFER) offer = v
         if (uuid16 !== CHR.SLICE_REQUEST) return
         const dv = new DataView(v.buffer, v.byteOffset, v.byteLength)
+        // like MER: the running total when the offer asks for session settlement
+        const sessionSettle = cumulative === null ? (offer[42] & 1) === 1 : cumulative
+        total += dv.getBigUint64(64, true)
         const transfer = {
           from: eth.addressOf(buyerEthKey),
           to: payTo || '0x' + b4a.toString(v.subarray(44, 64), 'hex'),
-          value: String(dv.getBigUint64(64, true)),
+          value: String(sessionSettle ? total : dv.getBigUint64(64, true)),
           validAfter: dv.getUint32(4, true),
           validBefore: dv.getUint32(8, true),
           nonce: '0x' + b4a.toString(v.subarray(12, 44), 'hex')
@@ -127,8 +144,10 @@ async function main () {
       buyerSide.write(frame(OP.WRITE, CHR.STREAM_REQUEST, b4a.from([2])))
     })
     buyerSide.end()
+    await new Promise((resolve) => setTimeout(resolve, 10))
     seller.off('payment', onPayment)
-    return { payments, offer }
+    seller.off('session', onSession)
+    return { payments, offer, sessions }
   }
 
   const ok = await session(deviceEth)
@@ -138,6 +157,16 @@ async function main () {
   check('payment by another wallet is refused', stranger.payments.length === 1 && stranger.payments[0].reason === 'signer is not the wallet in the buyer DID record', stranger.payments[0] && stranger.payments[0].reason)
   const redirected = await session(deviceEth, { slices: 1, payTo: vectors.messages[3].address })
   check('payment to another payee is refused', redirected.payments.length === 1 && redirected.payments[0].reason === 'wrong payee', redirected.payments[0] && redirected.payments[0].reason)
+
+  // session settlement: one nonce, the running total, one 'session' to settle
+  const sellerS = new Seller({ payee, domain: vectors.domain, token: '0x3600000000000000000000000000000000000000', rate: 250000, sliceMs: 300, power: () => 1200, settle: 'session' })
+  const ss = await session(deviceEth, { seller: sellerS })
+  const nonces = new Set(ss.payments.map((p) => p.authorization && p.authorization.nonce))
+  check('session offer carries the flag', ss.offer[42] === 1)
+  check('session: 3 running totals accepted on one nonce', ss.payments.length === 3 && ss.payments.every((p) => p.ok && p.cumulative) && nonces.size === 1, ss.payments.map((p) => p.reason || p.authorization.value).join(','))
+  check('session: one authorization to settle, for the total', ss.sessions.length === 1 && ss.sessions[0].total === '75' && ss.sessions[0].authorization.value === '75' && ss.sessions[0].slices === 3)
+  const perSlice = await session(deviceEth, { seller: sellerS, slices: 2, cumulative: false })
+  check('session: a buyer signing the slice alone is refused', perSlice.payments.length === 2 && perSlice.payments[0].ok && perSlice.payments[1].reason === 'wrong amount' && perSlice.sessions.length === 1 && perSlice.sessions[0].total === '25', perSlice.payments.map((p) => p.reason || 'ok').join(','))
 
   console.log(`\n${runtime}: ${passed} of ${passed + failed} passed`)
   if (failed) throw new Error(failed + ' failed')

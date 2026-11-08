@@ -110,12 +110,12 @@ async function main () {
 
   // buyers dial the seller's DID; this swarm only carries MER streams
   const sellerSwarm = new Hyperswarm({ keyPair, dht: swarm.dht })
-  const seller = boat.seller({ rate: RATE, power })
+  const seller = boat.seller({ rate: RATE, power, settle: chain.perSession ? 'session' : 'slice' })
   sellerSwarm.on('connection', (conn) => seller.serve(conn, swarm.dht))
   await sellerSwarm.listen()
 
   say(`seller ${did}`)
-  say(`payee ${payee} (WDK account), ${chain.tokenName} at ${chain.token} on chain ${chain.chainId}, settlement ${chain.settle ? 'on' : 'off'}`)
+  say(`payee ${payee} (WDK account), ${chain.tokenName} at ${chain.token} on chain ${chain.chainId}, settlement ${chain.settle ? (chain.perSession ? 'once per session' : 'per slice') + (chain.batch ? `, batched every ${chain.batch} s` : '') : 'off'}`)
   if (chain.settle) {
     account.getTokenBalance(chain.token).then((b) => say(`payee balance ${b} micro-units`), (err) => say('balance check failed: ' + err.message))
   }
@@ -125,8 +125,10 @@ async function main () {
   seller.on('record', (r) => say(`buyer DID record ${r.valid ? 'valid' : r.found ? 'INVALID' : 'not found'}${r.eth ? ', wallet ' + r.eth : ''} (${r.ms} ms)`))
   seller.on('open', ({ session }) => say(`paying stream open, session ${session}`))
   seller.on('end', ({ session }) => say(`paying stream closed, session ${session}`))
-  seller.on('slice', ({ slice, watts, amount }) => say(`billed slice ${slice}: ${watts.toFixed(1)} W, ${amount} micro-USDC`))
+  seller.on('slice', ({ slice, watts, amount }) => say(`billed slice ${slice}: ${watts.toFixed(1)} W, ${amount} micro-units`))
   seller.on('close', () => say('buyer disconnected'))
+  const lastReceipt = new Map() // buyer/session -> its last receipt
+  const sessionPaid = new Map() // buyer/session -> its running total
   seller.on('payment', async (p) => {
     if (!p.ok) {
       totals.refused++
@@ -134,16 +136,59 @@ async function main () {
       return
     }
     totals.verified++
-    totals.micro += Number(p.authorization.value)
+    // a session-settled payment carries the running total: count what it adds
+    const key = p.did + '/' + p.session
+    totals.micro += Number(p.authorization.value) - (p.cumulative ? (sessionPaid.get(key) || 0) : 0)
+    if (p.cumulative) sessionPaid.set(key, Number(p.authorization.value))
     const seq = receipts.length
-    await receipts.append({ t: Date.now(), seller: did, buyer: p.did, slice: p.slice, domain: boat.domain, authorization: p.authorization })
-    say(`VERIFIED slice ${p.slice}: ${p.authorization.value} micro-USDC from ${p.signer}, ${p.rttMs} ms, receipt #${seq}`)
-    if (!chain.settle) return
+    await receipts.append({ t: Date.now(), seller: did, buyer: p.did, slice: p.slice, session: p.session, cumulative: p.cumulative, domain: boat.domain, authorization: p.authorization })
+    lastReceipt.set(p.did + '/' + p.session, seq)
+    say(`VERIFIED slice ${p.slice}: ${p.authorization.value} micro-units${p.cumulative ? ' so far this session' : ''} from ${p.signer}, ${p.rttMs} ms, receipt #${seq}`)
+    if (chain.settle && !chain.perSession) await settle(p.authorization, seq)
+  })
 
-    // settle it on-chain from the WDK account, and log the transaction next to the receipt
+  // session settlement: one transfer per paying session, for its total
+  seller.on('session', async (e) => {
+    say(`session ${e.session} ended: ${e.slices} slices, ${e.total} micro-units in one authorization`)
+    if (chain.settle) await settle(e.authorization, lastReceipt.get(e.did + '/' + e.session))
+  })
+
+  // with --batch, settlements wait and go out together every few seconds,
+  // in one transaction through Multicall3
+  const queued = []
+  const flushing = chain.batch ? setInterval(flush, chain.batch * 1000) : null
+  async function flush () {
+    if (queued.length === 0 || flush.busy) return
+    flush.busy = true
+    const items = queued.splice(0)
     const t0 = Date.now()
     try {
-      const { hash, fee } = await boat.settle(p.authorization)
+      const batch = await boat.settleBatch(items.map((i) => i.authorization))
+      const r = batch.hash ? await boat.waitForBatch(batch) : { settled: [], block: null, gasUsed: 0n }
+      const done = new Set(r.settled.map((a) => a.nonce + a.from.toLowerCase()))
+      for (const i of items) {
+        const key = i.authorization.nonce + i.authorization.from.toLowerCase()
+        const skip = batch.skipped.find((s) => s.authorization === i.authorization)
+        const ok = done.has(key)
+        ok ? totals.settled++ : totals.failed++
+        await receipts.append({ type: 'settlement', receipt: i.seq, tx: batch.hash, block: r.block, ok, batch: items.length, ...(skip ? { error: skip.reason } : {}) })
+      }
+      say(`SETTLED BATCH of ${items.length}: ${done.size} settled, ${batch.skipped.length} skipped, block ${r.block}, ${r.gasUsed} gas, tx ${batch.hash}, ${Date.now() - t0} ms`)
+    } catch (err) {
+      totals.failed += items.length
+      for (const i of items) await receipts.append({ type: 'settlement', receipt: i.seq, ok: false, error: err.shortMessage || err.message })
+      say(`BATCH SETTLEMENT FAILED (${items.length}): ${err.shortMessage || err.message}`)
+    } finally {
+      flush.busy = false
+    }
+  }
+
+  // settle on-chain from the WDK account, and log the transaction next to the receipt
+  async function settle (authorization, seq) {
+    if (chain.batch) return queued.push({ authorization, seq })
+    const t0 = Date.now()
+    try {
+      const { hash, fee } = await boat.settle(authorization)
       const r = await boat.waitForSettlement(hash)
       if (r.ok) totals.settled++
       else totals.failed++
@@ -154,7 +199,7 @@ async function main () {
       await receipts.append({ type: 'settlement', receipt: seq, ok: false, error: err.shortMessage || err.message })
       say(`SETTLEMENT FAILED receipt #${seq}: ${err.shortMessage || err.message}`)
     }
-  })
+  }
 
   // the last DID record version in the log; a changed record (a new wallet)
   // is appended, signed by the DID key, so receipts paid to an earlier wallet
@@ -174,7 +219,7 @@ async function main () {
   await publish()
   const republish = setInterval(publish, 30 * 60 * 1000)
 
-  const summary = setInterval(() => say(`summary: ${totals.verified} verified, ${totals.refused} refused, ${totals.micro} micro-USDC, ${totals.settled} settled, ${totals.failed} settlement failures, ${receipts.length} log entries`), 30000)
+  const summary = setInterval(() => say(`summary: ${totals.verified} verified, ${totals.refused} refused, ${totals.micro} micro-units, ${totals.settled} settled, ${totals.failed} settlement failures, ${receipts.length} log entries`), 30000)
 
   // Readings are dialed from a DHT of their own. On 2026-11-07 dials from the
   // swarm's DHT timed out 6 of 6 times in this app; later the same code passed
@@ -199,6 +244,11 @@ async function main () {
     clearInterval(republish)
     clearInterval(summary)
     clearInterval(dialer)
+    if (flushing) {
+      clearInterval(flushing)
+      while (flush.busy) await new Promise((resolve) => setTimeout(resolve, 200))
+      await flush() // what is still queued
+    }
     if (readerDht) await readerDht.destroy()
     await sellerSwarm.destroy()
     wdk.dispose()

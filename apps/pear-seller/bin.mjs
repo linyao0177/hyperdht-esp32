@@ -17,6 +17,8 @@ const cmd = command(
   flag('--no-updates', 'disable OTA updates for this run'),
   flag('--dial <did>', 'BoAT MER device to read an attested reading from, every minute'),
   flag('--settle', 'submit each payment to the token from the WDK account (pays gas)'),
+  flag('--per-session', 'session settlement: devices sign a running total on one nonce, settled once per session'),
+  flag('--batch <seconds>', 'with --settle: settle together every so many seconds, in one transaction (Multicall3)'),
   flag('--rpc <url>', 'chain RPC (default: the Arc testnet)'),
   flag('--chain-id <id>', 'chain id (default 5042002)'),
   flag('--token <address>', 'EIP-3009 token devices pay in (default: USDC on the Arc testnet)'),
@@ -44,6 +46,8 @@ const app = new App({
   dial: cmd.flags.dial,
   chain: {
     settle: !!cmd.flags.settle,
+    perSession: !!cmd.flags.perSession,
+    batch: Number(cmd.flags.batch || 0),
     rpc: cmd.flags.rpc || 'https://rpc.testnet.arc.network',
     chainId: Number(cmd.flags.chainId || 5042002),
     token: cmd.flags.token || '0x3600000000000000000000000000000000000000',

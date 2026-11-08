@@ -251,9 +251,40 @@ With `CONFIG_MER_OWNER_KEY` set to the owner's HyperDHT public key, a stream fro
 
 ## The device pays an x402 API (2026-11-07)
 
-With `CONFIG_MER_X402_URL` set, a task of its own ([`main/x402.c`](main/x402.c)) sets the clock by SNTP and calls the URL every `CONFIG_MER_X402_INTERVAL_S` with MER's x402 client, paying at most `CONFIG_MER_X402_MAX` per call. Against [the WDK-facilitated x402 server](../../packages/wdk-protocol-boat-evm/examples/x402) on the Arc testnet, 4 of 4 calls were paid and settled, 10.4–15.0 s each. The image grows to 1.26 MB (14% of the app partition free) with the HTTP client.
+With `CONFIG_MER_X402_URL` set, a task of its own ([`main/x402.c`](main/x402.c)) waits for the clock (SNTP, started at boot) and calls the URL every `CONFIG_MER_X402_INTERVAL_S` with MER's x402 client, paying at most `CONFIG_MER_X402_MAX` per call. Against [the WDK-facilitated x402 server](../../packages/wdk-protocol-boat-evm/examples/x402) on the Arc testnet, 4 of 4 calls were paid and settled, 10.4–15.0 s each. The image grows to 1.26 MB (14% of the app partition free) with the HTTP client.
 
-MER signs through a global EIP-712 domain, so the x402 task must not sign while the buyer or anchoring does; that run had both off. See [x402.c](main/x402.c).
+MER v1.0.1 signs through a global EIP-712 domain, so two tasks signing at once can sign under each other's domain. [`patches/boat-mer`](../../patches/boat-mer) makes it sign under a per-call domain. With the patch (built with `override_path` to a patched checkout), the buyer, anchoring, x402 and the signer ran together on the board for 5 minutes: 41 slices accepted, 7 of 8 anchor submissions accepted with valid receipts and none rejected, 6 of 6 x402 calls settled, the signer's 8 checks passed. Without the patch, turn the buyer and anchoring off when x402 is on.
+
+## Paying a smart account (2026-11-08)
+
+A seller paid to a smart account (an ERC-4337 Safe from WDK) publishes a record with a `pay` field, `{"v":1,"did","eth":"<owner>","pay":"<Safe>","eth_sig"}`, `eth_sig` signing `"<did>\npay:<Safe>"` with the owner key ([boat-peer](../../packages/boat-peer)). `verify_record` accepts it and makes the `pay` address the payee every slice is checked against. Firmware without this refuses such a record, so it never pays the owner key by mistake.
+
+## A Solana wallet on the device (2026-11-08)
+
+With `CONFIG_MER_SOL_MINT` set (and `CONFIG_MER_OWNER_KEY`), the owner channel also takes `sol_address` and `sol_transfer`. The device derives an Ed25519 key for Solana from its DID key (`BLAKE2b(key = DID seed, "boat-solana/1")`, [`main/solana.h`](main/solana.h)) and signs a transaction message only when it is a Token `transferChecked` of that mint out of its own account, within `CONFIG_MER_SIGNER_MAX_VALUE`, whose fee someone else pays and in which the device is a read-only signer. [`packages/wdk-protocol-boat-solana`](../../packages/wdk-protocol-boat-solana) makes it a signer for a WDK Solana account; its tests run this C code against a local validator, 13 of 13.
+
+## Selling readings with x402 (2026-11-08)
+
+With `CONFIG_MER_X402_SELL_PORT` and `CONFIG_MER_X402_SELL_FACILITATOR`, the device runs an HTTP server ([`main/x402_sell.c`](main/x402_sell.c)): `GET /reading` costs `CONFIG_MER_X402_SELL_PRICE` units of `CONFIG_MER_X402_SELL_TOKEN` (EIP-3009, with its domain name and version), paid to the device's own address. The device checks each payment itself with MER's crypto ([`main/x402_check.c`](main/x402_check.c): payee, price, validity window, the signature recovered under the token's EIP-712 domain, a nonce not seen before), has the facilitator settle it, and only then answers with an attested reading and a `PAYMENT-RESPONSE`. The request header limit goes up to 3 KB (`CONFIG_HTTPD_MAX_REQ_HDR_LEN`) for the payment. [`packages/wdk-protocol-boat-evm`](../../packages/wdk-protocol-boat-evm#a-device-that-sells-with-x402) has the facilitator, a buyer, and a test that runs `x402_check.c` against payments from the standard x402 client, 8 of 8.
+
+## Firmware updates from a Hypercore (2026-11-08)
+
+With `CONFIG_MER_OTA_CORE`, `_SIGNER` and `_SERVER`, the device checks for a newer release every `CONFIG_MER_OTA_INTERVAL_S` ([`components/hdht_ota`](../../components/hdht_ota), [`packages/boat-ota`](../../packages/boat-ota)) and updates itself, every block checked against the publisher's signed Hypercore tree. The firmware version is `PROJECT_VER` in `CMakeLists.txt`. This example now uses a partition table with two OTA slots, [`partitions_ota.csv`](partitions_ota.csv) (1.9 MB each; `nvs` stays at 0x9000, so a board keeps its keys when flashed with it). The image, with the x402 server and the Solana signer, is 1.36 MB.
+
+## On the board, every feature at once (2026-11-08)
+
+One 0.7.0 image with the buyer, anchoring, the owner's signer (EVM and Solana), x402 selling and OTA, on the ESP32-C3 over the public HyperDHT. Chains were local: an anvil fork of the Stable testnet (USD₮0, chain 2201) and a `solana-test-validator`; anchoring stayed on the Arc testnet through the cloud anchor node.
+
+| | Result |
+|---|---|
+| EVM wallet (`wdk-protocol-boat-evm/examples/device-wallet.js`) | 8 of 8: the device signed a 0.05 USD₮0 sweep, the owner's WDK account submitted it and paid the gas |
+| Solana wallet (`wdk-protocol-boat-solana/examples/device-wallet.js`) | 4 of 4: the device signed a 0.1-token transfer, the owner's WDK account paid the 10,000-lamport fee; over-limit and other-owner requests refused |
+| x402 selling (`buy-from-device.js`, `facilitator.js`) | 3 of 3 readings bought by a standard x402 client and settled by the facilitator, 1.4–2.1 s each, every reading's signature valid |
+| Batched settlement (`apps/pear-seller --settle --batch 20`) | 4 batches, 12 of 12 slices settled, 0 failures (one transaction per batch, Multicall3) |
+| A seller record with `pay` | Same seller DID, wallet switched to a WDK Safe: the board, still holding the old record, refused the first slice to the Safe ("payee mismatch") and disconnected, looked the record up again, then paid the Safe; settled as user operations (`wdk-protocol-boat-evm/examples/smart-seller.js`), 10 of 10 with `--batch 20` |
+| OTA 0.7.0 → 0.7.1 | 1,366,240 bytes in 334 blocks from a Mac seeding the core, 65.7 s, every block checked; rebooted into `ota_1`, then "up to date" |
+
+Found and fixed on the way: the clock was set by SNTP only when `CONFIG_MER_X402_URL` was on, so without it the signer and the x402 seller compared validity windows with the seconds since boot and refused every authorization. SNTP now starts in `app_main` for every feature, and both say "device clock not set yet" until it has synced. Not fixed: about 24 s after boot the task watchdog warned twice that the hdht task had kept the CPU for 5 s (BLAKE2b, then TweetNaCl, as records are verified and signed back to back); the board did not reset.
 
 ## Integration notes
 

@@ -1,0 +1,12 @@
+version: "0.1.0"
+description: Groth16 proof verification on alt_bn128 (circom/snarkjs proofs) for ESP32, with the camera event format that uses it
+url: https://github.com/linyao0177/hyperdht-esp32/tree/main/components/zk
+repository: https://github.com/linyao0177/hyperdht-esp32.git
+license: MIT
+targets:
+  - esp32c3
+dependencies:
+  idf: ">=5.3"
+files:
+  exclude:
+    - "test/**"

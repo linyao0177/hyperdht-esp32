@@ -1,9 +1,16 @@
 version: "0.1.0"
 description: HyperDHT (Holepunch) client and server in C for ESP32, with SecretStream over any byte stream
 url: https://github.com/linyao0177/hyperdht-esp32
+repository: https://github.com/linyao0177/hyperdht-esp32.git
 license: MIT
 targets:
   - esp32c3
 dependencies:
   idf: ">=5.3"
   espressif/libsodium: "^1.0.20"
+  tlay/libudx: "0.1.0"
+  tlay/uv_esp: "0.1.0"
+files:
+  exclude:
+    - "test/**"
+    - "build/**"

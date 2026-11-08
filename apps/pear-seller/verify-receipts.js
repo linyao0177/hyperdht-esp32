@@ -61,6 +61,7 @@ async function main () {
   const logged = new Map() // did -> wallet
   let versions = 0
   const nonces = new Set()
+  const sessionTotals = new Map() // nonce -> the session's running total so far
   let receipts = 0
   let good = 0
   let micro = 0n
@@ -89,7 +90,7 @@ async function main () {
       else if (logged.has(r.seller) ? a.to.toLowerCase() !== logged.get(r.seller) : a.to.toLowerCase() !== await walletOf(r.seller)) {
         problem = logged.has(r.seller) ? "payee is not the wallet in the seller's DID record logged before it" : "payee is not the wallet in the seller's current DID record (the log has no earlier version)"
       }
-      else if (nonces.has(a.nonce)) problem = 'nonce used twice'
+      else if (nonces.has(a.nonce) && !(r.cumulative && sessionTotals.has(a.nonce) && BigInt(a.value) > sessionTotals.get(a.nonce))) problem = 'nonce used twice'
     } catch (err) {
       problem = 'malformed: ' + err.message
     }
@@ -99,7 +100,14 @@ async function main () {
       continue
     }
     good++
-    micro += BigInt(a.value)
+    if (r.cumulative) {
+      // one session's authorizations share a nonce and carry its running total:
+      // only the largest can be executed, so only it counts
+      micro += BigInt(a.value) - (sessionTotals.get(a.nonce) || 0n)
+      sessionTotals.set(a.nonce, BigInt(a.value))
+    } else {
+      micro += BigInt(a.value)
+    }
     const s = settlements.get(i)
     if (s && s.ok) claimed++
     if (rpc && s && s.ok) {

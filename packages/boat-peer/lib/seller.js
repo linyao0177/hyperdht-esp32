@@ -10,6 +10,13 @@
 // and checks every EIP-3009 authorization the buyer signs: the signer must be
 // the wallet in the buyer's DID record, and the payee, amount and slice must be
 // what was billed. Settling the authorizations on-chain is the app's job.
+//
+// settle: 'session' asks for session settlement (BOAT_NANO_OFFER_SESSION_SETTLE,
+// a BoAT MER buyer with patches/boat-mer 0002): every slice of a paying
+// session carries one nonce and validity, and the buyer signs the session's
+// running total. Only one of those authorizations can ever be executed, so the
+// app settles the last one when the session ends ('session' event): one
+// transfer per session instead of one per slice.
 
 const b4a = require('b4a')
 const sodium = require('sodium-universal')
@@ -33,8 +40,10 @@ class Seller extends EventEmitter {
   // domain: the EIP-712 domain buyers sign under ({name, version, chainId, verifyingContract})
   // token: the payment token's address; rate: micro-USDC per kWh
   // power: () => watts the seller is delivering now
-  constructor ({ payee, domain, token, rate, sliceMs = 5000, maxSession = 500000, powerRange = [3, 50], power }) {
+  constructor ({ payee, domain, token, rate, sliceMs = 5000, maxSession = 500000, powerRange = [3, 50], power, settle = 'slice' }) {
     super()
+    if (settle !== 'slice' && settle !== 'session') throw new Error("settle must be 'slice' or 'session'")
+    this.settle = settle
     this.payee = payee
     this.domain = domain
     this.token = token
@@ -49,7 +58,7 @@ class Seller extends EventEmitter {
   serve (conn, dht) {
     const buyer = conn.remotePublicKey
     const buyerDid = didOf(buyer)
-    const s = { buyerDid, eth: null, session: 0, streaming: false, sliceId: 0, heartbeat: 0, samples: [], lastRx: Date.now(), pending: new Map(), slicer: null }
+    const s = { buyerDid, eth: null, session: 0, streaming: false, sliceId: 0, heartbeat: 0, samples: [], lastRx: Date.now(), pending: new Map(), slicer: null, nonce: null, validBefore: 0, paid: 0n, paidSlices: 0, last: null }
     this.emit('buyer', { did: buyerDid })
 
     const started = Date.now()
@@ -82,7 +91,14 @@ class Seller extends EventEmitter {
       v.setUint32(14, this.powerRange[0], true)
       v.setUint32(18, this.powerRange[1], true)
       b4a.from(this.token.slice(2), 'hex').copy(b, 22)
+      v.setUint8(42, this.settle === 'session' ? 1 : 0) // flags: BOAT_NANO_OFFER_SESSION_SETTLE
       return b
+    }
+
+    // a session's paid total and its last authorization, for session settlement
+    const endSession = () => {
+      if (s.last) this.emit('session', { did: buyerDid, session: s.session, authorization: s.last, total: String(s.paid), slices: s.paidSlices })
+      s.last = null
     }
 
     const bill = () => {
@@ -90,21 +106,24 @@ class Seller extends EventEmitter {
       s.samples = []
       const microWh = Math.round(watts * (this.sliceMs / 1000) * 1e6 / 3600)
       const amount = Math.round(microWh * this.rate / 1e9)
-      const nonce = b4a.alloc(32)
-      sodium.randombytes_buf(nonce)
+      let nonce = s.nonce
+      if (this.settle === 'slice') {
+        nonce = b4a.alloc(32)
+        sodium.randombytes_buf(nonce)
+      }
 
       const b = b4a.alloc(88)
       const v = view(b)
       v.setUint32(0, ++s.sliceId, true)
       v.setUint32(4, 0, true) // valid after
-      v.setUint32(8, Math.floor(Date.now() / 1000) + 7 * 24 * 3600, true) // valid before
+      v.setUint32(8, this.settle === 'session' ? s.validBefore : Math.floor(Date.now() / 1000) + 7 * 24 * 3600, true) // valid before
       nonce.copy(b, 12)
       b4a.from(this.payee.slice(2), 'hex').copy(b, 44)
       v.setBigUint64(64, BigInt(amount), true)
       v.setUint32(72, microWh, true)
       v.setUint32(76, Math.round(watts * 1000), true)
 
-      s.pending.set(b4a.toString(nonce, 'hex'), { slice: s.sliceId, amount, sentAt: Date.now() })
+      s.pending.set(s.sliceId, { slice: s.sliceId, nonce: b4a.toString(nonce, 'hex'), amount, sentAt: Date.now() })
       this.emit('slice', { did: buyerDid, slice: s.sliceId, watts, amount })
       conn.write(frame(OP.NOTIFY, CHR.SLICE_REQUEST, b))
     }
@@ -112,25 +131,34 @@ class Seller extends EventEmitter {
     const check = (json) => {
       const p = JSON.parse(json)
       const nonce = String(p.nonce).replace(/^0x/, '').toLowerCase()
-      const req = s.pending.get(nonce)
-      s.pending.delete(nonce)
+      const req = s.pending.get(p.slice_id)
+      s.pending.delete(p.slice_id)
+      // session settlement: the buyer signs what it has paid so far plus this slice
+      const expected = req ? (this.settle === 'session' ? s.paid + BigInt(req.amount) : BigInt(req.amount)) : 0n
       const transfer = { from: p.from, to: p.to, value: p.value, validAfter: p.validAfter, validBefore: p.validBefore, nonce: p.nonce }
       const signer = eth.verifyTransfer(this.domain, transfer, p.sig)
       let reason = null
-      if (!req) reason = 'not billed'
+      if (!req || req.nonce !== nonce) reason = 'not billed'
       else if (signer.toLowerCase() !== String(p.from).toLowerCase()) reason = 'signer is not from'
       else if (s.eth === null) reason = 'buyer has no valid DID record'
       else if (signer.toLowerCase() !== s.eth) reason = 'signer is not the wallet in the buyer DID record'
       else if (String(p.to).toLowerCase() !== this.payee.toLowerCase()) reason = 'wrong payee'
-      else if (BigInt(p.value) !== BigInt(req.amount)) reason = 'wrong amount'
-      else if (p.slice_id !== req.slice) reason = 'wrong slice'
+      else if (BigInt(p.value) !== expected) reason = 'wrong amount'
+      const authorization = { ...transfer, value: String(p.value), signature: p.sig }
+      if (reason === null && this.settle === 'session') {
+        s.paid = expected
+        s.paidSlices++
+        s.last = authorization
+      }
       this.emit('payment', {
         ok: reason === null,
         reason,
         did: buyerDid,
         slice: p.slice_id,
         signer,
-        authorization: { ...transfer, value: String(p.value), signature: p.sig },
+        session: s.session,
+        cumulative: this.settle === 'session',
+        authorization,
         rttMs: req ? Date.now() - req.sentAt : -1
       })
     }
@@ -147,7 +175,13 @@ class Seller extends EventEmitter {
       } else if (op === OP.WRITE && uuid16 === CHR.STREAM_REQUEST) {
         clearInterval(s.slicer)
         if (value.length === 0 || value[0] === 2) {
+          endSession()
           s.session++
+          s.paid = 0n
+          s.paidSlices = 0
+          s.nonce = b4a.alloc(32)
+          sodium.randombytes_buf(s.nonce)
+          s.validBefore = Math.floor(Date.now() / 1000) + 7 * 24 * 3600
           s.streaming = true
           s.sliceId = 0
           s.samples = []
@@ -157,6 +191,7 @@ class Seller extends EventEmitter {
         } else {
           s.streaming = false
           this.emit('end', { did: buyerDid, session: s.session })
+          endSession()
         }
       } else if (op === OP.WRITE && uuid16 === CHR.SLICE_PAYMENT) {
         try {
@@ -171,6 +206,7 @@ class Seller extends EventEmitter {
     conn.on('close', () => {
       clearInterval(sampler)
       clearInterval(s.slicer)
+      endSession()
       this.emit('close', { did: buyerDid })
     })
     return s

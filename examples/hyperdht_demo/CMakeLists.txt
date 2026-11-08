@@ -3,7 +3,6 @@ cmake_minimum_required(VERSION 3.16)
 # hyperdht-esp32 demo: connect by key, then serve (optionally with the BLE link).
 set(EXTRA_COMPONENT_DIRS
   $ENV{IDF_PATH}/examples/common_components/protocol_examples_common
-  ${CMAKE_CURRENT_LIST_DIR}/../../components
 )
 
 # WiFi credentials: the repo root's gitignored sdkconfig.wifi (see sdkconfig.wifi.example)

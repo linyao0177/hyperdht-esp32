@@ -69,6 +69,17 @@ config MER_SIGNER_MAX_VALUE
     int "Most base units of the token the device signs over in one authorization for its owner"
     default 100000
 
+config MER_SOL_MINT
+    string "Solana SPL token mint the device signs transfers of for its owner (base58), empty for none"
+    default ""
+    help
+        With CONFIG_MER_OWNER_KEY, the owner can also have the device sign SPL
+        Token transfers of this mint (USD₮ on Solana:
+        Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB) out of its own token
+        account, with a Solana key derived from the DID key (main/solana.h),
+        at most CONFIG_MER_SIGNER_MAX_VALUE base units per transaction. The
+        fee payer is the owner's account: the device holds no SOL.
+
 config MER_X402_URL
     string "x402 URL the device calls and pays for, empty for none"
     default ""
@@ -80,6 +91,63 @@ config MER_X402_INTERVAL_S
 config MER_X402_MAX
     int "Most base units the device pays for one x402 call"
     default 10000
+
+config MER_X402_SELL_PORT
+    int "HTTP port the device sells attested readings on with x402, 0 for none"
+    default 0
+    help
+        GET /reading costs MER_X402_SELL_PRICE base units of the EIP-3009
+        token MER_X402_SELL_TOKEN, paid to the device's own address. The
+        device checks each payment itself and has MER_X402_SELL_FACILITATOR
+        settle it before it answers.
+
+config MER_X402_SELL_FACILITATOR
+    string "x402 facilitator URL that settles the device's sales (POST <url>/settle)"
+    default ""
+
+config MER_X402_SELL_PRICE
+    int "Price of a reading, in base units of the token"
+    default 1000
+
+config MER_X402_SELL_CHAIN_ID
+    int "Chain id of the token readings are paid in"
+    default 5042002
+
+config MER_X402_SELL_TOKEN
+    string "EIP-3009 token readings are paid in"
+    default "0x3600000000000000000000000000000000000000"
+
+config MER_X402_SELL_TOKEN_NAME
+    string "The token's EIP-712 domain name"
+    default "USDC"
+
+config MER_X402_SELL_TOKEN_VERSION
+    string "The token's EIP-712 domain version"
+    default "2"
+
+config MER_OTA_CORE
+    string "Hypercore of firmware releases to update from (key, hex), empty for none"
+    default ""
+    help
+        Releases appended by packages/boat-ota (boat-ota publish). The device
+        checks every block against the core's signed tree, signed by
+        MER_OTA_SIGNER, and boots a newer release of MER_OTA_NAME.
+
+config MER_OTA_SIGNER
+    string "The release publisher's Ed25519 public key (hex)"
+    default ""
+
+config MER_OTA_SERVER
+    string "A peer serving the core over HyperDHT (its public key, hex: boat-ota seed prints it)"
+    default ""
+
+config MER_OTA_NAME
+    string "The product name releases are published under, empty for the project name"
+    default ""
+
+config MER_OTA_INTERVAL_S
+    int "Seconds between update checks"
+    default 3600
 
 config MER_X402_STACK
     int "x402 task stack size"

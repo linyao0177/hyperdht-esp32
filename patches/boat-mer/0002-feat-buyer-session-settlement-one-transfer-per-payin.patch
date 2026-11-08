@@ -1,0 +1,205 @@
+From 704f68e65f7e1e7b7b81a22e5bd5da450d302edd Mon Sep 17 00:00:00 2001
+From: linyao01 <linyao01@gmail.com>
+Date: Sat, 7 Nov 2026 17:12:23 +0800
+Subject: [PATCH 2/2] feat(buyer): session settlement, one transfer per paying
+ session
+
+Settling every slice on-chain costs far more gas than a slice is worth
+(about 2,200 micro-USDC of gas for a 3-4 micro-USDC slice on the Arc
+testnet). With BOAT_NANO_OFFER_SESSION_SETTLE in the offer's flags (the
+first reserved byte), every slice of a session carries the session's
+nonce and validity, and the buyer signs the running total instead of
+the slice. The authorizations share one nonce, so only one of them can
+be executed: the seller settles the last one, once per session, and the
+earlier ones are void from then on.
+
+The buyer still checks every slice against the meter, the rate and the
+caps; a changed nonce or validity within the session is rejected, and
+per-slice offers keep refusing a repeated nonce. tests/test_buyer.c
+covers both modes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ include/boat_buyer_nanopay.h         |  6 ++++
+ include/boat_nano_wire.h             | 15 +++++++++-
+ protocols/buyer/boat_buyer_nanopay.c | 32 ++++++++++++++++----
+ tests/test_buyer.c                   | 44 ++++++++++++++++++++++++++++
+ 4 files changed, 91 insertions(+), 6 deletions(-)
+
+diff --git a/include/boat_buyer_nanopay.h b/include/boat_buyer_nanopay.h
+index 068f34d..f31da8b 100644
+--- a/include/boat_buyer_nanopay.h
++++ b/include/boat_buyer_nanopay.h
+@@ -161,6 +161,12 @@ typedef struct boat_buyer_ctx {
+     uint64_t  cumulative_micro;
+     uint32_t  last_slice_id;
+     bool      seen_any_slice;
++    /* session settlement (BOAT_NANO_OFFER_SESSION_SETTLE): the nonce and
++     * validity of the session's first slice, which every later slice repeats */
++    bool      have_session_nonce;
++    uint8_t   session_nonce[32];
++    uint32_t  session_valid_after;
++    uint32_t  session_valid_before;
+     uint8_t   nonce_set[BOAT_BUYER_NONCE_CAP][BOAT_BUYER_NONCE_PREFIX];
+     uint32_t  nonce_count;
+ 
+diff --git a/include/boat_nano_wire.h b/include/boat_nano_wire.h
+index ba90b9c..613e956 100644
+--- a/include/boat_nano_wire.h
++++ b/include/boat_nano_wire.h
+@@ -129,11 +129,24 @@ typedef struct __attribute__((packed)) {
+     uint32_t expected_power_w_min;
+     uint32_t expected_power_w_max;
+     uint8_t  payment_token[20];   /* USDC contract address on the settlement chain */
+-    uint8_t  reserved[8];
++    uint8_t  flags;               /* BOAT_NANO_OFFER_* (was reserved; 0 = per-slice) */
++    uint8_t  reserved[7];
+ } boat_nano_stream_offer_t;
+ _Static_assert(sizeof(boat_nano_stream_offer_t) == 50,
+                "stream_offer wire size drifted — update both ends");
+ 
++/*
++ * Session settlement. Every slice of a session carries the same nonce and
++ * validity, and the buyer signs the session's running total instead of the
++ * slice's amount. The authorizations share one nonce, so only one of them can
++ * ever be executed: the seller settles the last (largest) one, once per
++ * session, and the earlier ones are void from then on. The buyer still checks
++ * every slice against the meter and the caps, and its exposure is the total
++ * it has signed for, as before. Without the flag, each slice is its own
++ * transfer with its own nonce.
++ */
++#define BOAT_NANO_OFFER_SESSION_SETTLE 0x01
++
+ /* ======================================================================
+  * 0xEE03 SliceRequest — per-slice billing request (88 bytes).
+  * ====================================================================== */
+diff --git a/protocols/buyer/boat_buyer_nanopay.c b/protocols/buyer/boat_buyer_nanopay.c
+index c2c6ebc..f16964f 100644
+--- a/protocols/buyer/boat_buyer_nanopay.c
++++ b/protocols/buyer/boat_buyer_nanopay.c
+@@ -64,6 +64,7 @@ static void session_reset(boat_buyer_ctx_t *c)
+     c->cumulative_micro = 0;
+     c->last_slice_id = 0;
+     c->seen_any_slice = false;
++    c->have_session_nonce = false;
+     c->nonce_count = 0;   /* entries above the count are never read */
+ }
+ 
+@@ -113,7 +114,8 @@ static void handle_offer(boat_buyer_ctx_t *c, const uint8_t *data, uint16_t len)
+     }
+     c->offer = o;
+     c->have_offer = true;
+-    blog(c, 2, "offer accepted");
++    blog(c, 2, (o.flags & BOAT_NANO_OFFER_SESSION_SETTLE) ? "offer accepted (session settlement)"
++                                                          : "offer accepted");
+ }
+ 
+ /* ---- 0xEE03 SliceRequest: validate -> sign -> write 0xEE04 ---------------- */
+@@ -163,8 +165,21 @@ static void handle_slice(boat_buyer_ctx_t *c, const uint8_t *data, uint16_t len)
+     }
+ 
+     /* (6) nonce reuse — check only; the nonce is recorded in the commit
+-     * block below so a sign/serialize/write failure never burns it. */
+-    if (nonce_seen(c, req.nonce)) { blog(c, 1, "reject slice: nonce reuse"); return; }
++     * block below so a sign/serialize/write failure never burns it.
++     * Session settlement: the first slice brings a fresh nonce, every later
++     * slice must repeat it and its validity, so all of the session's
++     * authorizations stay alternatives to one another. */
++    const bool session = (c->offer.flags & BOAT_NANO_OFFER_SESSION_SETTLE) != 0;
++    if (session && c->have_session_nonce) {
++        if (memcmp(req.nonce, c->session_nonce, 32) != 0) {
++            blog(c, 1, "reject slice: session nonce changed"); return;
++        }
++        if (req.valid_after != c->session_valid_after || req.valid_before != c->session_valid_before) {
++            blog(c, 1, "reject slice: session validity changed"); return;
++        }
++    } else if (nonce_seen(c, req.nonce)) {
++        blog(c, 1, "reject slice: nonce reuse"); return;
++    }
+ 
+     /* (7) replay-set capacity — roll the window over IN PLACE and carry on.
+      * Ordering matters: (6) ran first, so a replay of a still-recorded nonce
+@@ -184,8 +199,9 @@ static void handle_slice(boat_buyer_ctx_t *c, const uint8_t *data, uint16_t len)
+     slice.valid_after = req.valid_after;
+     slice.valid_before = req.valid_before;
+ 
++    /* session settlement signs the running total, per-slice the slice */
+     boat_nano_auth_t auth;
+-    boat_err_t err = boat_nano_sign(c->kp, req.to_address, amount, c->cfg.chain_id,
++    boat_err_t err = boat_nano_sign(c->kp, req.to_address, session ? next_total : amount, c->cfg.chain_id,
+                                     c->cfg.gateway_contract, c->cfg.domain_name,
+                                     c->cfg.domain_version, &slice, &auth);
+     if (err != BOAT_OK) { blog(c, 0, "boat_nano_sign failed"); return; }
+@@ -198,7 +214,13 @@ static void handle_slice(boat_buyer_ctx_t *c, const uint8_t *data, uint16_t len)
+     if (wrc != 0) { blog(c, 0, "0xEE04 write failed"); /* not committed */ return; }
+ 
+     /* commit only after a successful sign + write */
+-    nonce_record(c, req.nonce);
++    if (!(session && c->have_session_nonce)) nonce_record(c, req.nonce);
++    if (session && !c->have_session_nonce) {
++        memcpy(c->session_nonce, req.nonce, 32);
++        c->session_valid_after = req.valid_after;
++        c->session_valid_before = req.valid_before;
++        c->have_session_nonce = true;
++    }
+     c->cumulative_micro = next_total;
+     c->last_slice_id = req.slice_id;
+     c->seen_any_slice = true;
+diff --git a/tests/test_buyer.c b/tests/test_buyer.c
+index 6eca1a7..1da056f 100644
+--- a/tests/test_buyer.c
++++ b/tests/test_buyer.c
+@@ -197,6 +197,50 @@ void test_buyer(void)
+            ctx.seen_any_slice,
+            "rollover PRESERVED the monotonic slice_id guard");
+ 
++    /* ---- session settlement: one nonce, the running total ---------------- */
++    {
++        static boat_buyer_ctx_t sx;
++        ASSERT(boat_buyer_init(&sx, &kp, &xport, NULL, &cfg, &cb, NULL) == BOAT_OK, "session: buyer_init");
++        boat_buyer_on_connect(&sx);
++        boat_nano_stream_offer_t so = offer;
++        so.flags = BOAT_NANO_OFFER_SESSION_SETTLE;
++        boat_buyer_on_notify(&sx, BOAT_NANO_CHR_STREAM_OFFER, (uint8_t *)&so, sizeof so);
++        boat_nano_slice_request_v2_t a = s0;
++        a.slice_id = 1; memset(a.nonce, 0x5E, 32);
++        int before = g_signed_count;
++        boat_buyer_on_notify(&sx, BOAT_NANO_CHR_SLICE_REQUEST, (uint8_t *)&a, sizeof a);
++        a.slice_id = 2;
++        boat_buyer_on_notify(&sx, BOAT_NANO_CHR_SLICE_REQUEST, (uint8_t *)&a, sizeof a);
++        a.slice_id = 3;
++        boat_buyer_on_notify(&sx, BOAT_NANO_CHR_SLICE_REQUEST, (uint8_t *)&a, sizeof a);
++        ASSERT(g_signed_count - before == 3, "session: 3 slices on one nonce signed");
++        ASSERT(strstr((char *)g_write_buf, "\"value\":\"51\"") != NULL, "session: third signs the total (3 x 17)");
++        ASSERT(sx.cumulative_micro == 51, "session: running total 51");
++
++        boat_nano_slice_request_v2_t other = a;
++        other.slice_id = 4; memset(other.nonce, 0x6F, 32);
++        boat_buyer_on_notify(&sx, BOAT_NANO_CHR_SLICE_REQUEST, (uint8_t *)&other, sizeof other);
++        ASSERT(g_signed_count - before == 3, "session: a changed nonce is rejected");
++        boat_nano_slice_request_v2_t later = a;
++        later.slice_id = 5; later.valid_before += 3600;
++        boat_buyer_on_notify(&sx, BOAT_NANO_CHR_SLICE_REQUEST, (uint8_t *)&later, sizeof later);
++        ASSERT(g_signed_count - before == 3, "session: a changed validity is rejected");
++
++        /* per-slice offers still refuse a repeated nonce */
++        static boat_buyer_ctx_t px;
++        boat_buyer_init(&px, &kp, &xport, NULL, &cfg, &cb, NULL);
++        boat_buyer_on_connect(&px);
++        boat_buyer_on_notify(&px, BOAT_NANO_CHR_STREAM_OFFER, (uint8_t *)&offer, sizeof offer);
++        boat_nano_slice_request_v2_t p1 = s0;
++        p1.slice_id = 1; memset(p1.nonce, 0x71, 32);
++        boat_buyer_on_notify(&px, BOAT_NANO_CHR_SLICE_REQUEST, (uint8_t *)&p1, sizeof p1);
++        p1.slice_id = 2;
++        int mid = g_signed_count;
++        boat_buyer_on_notify(&px, BOAT_NANO_CHR_SLICE_REQUEST, (uint8_t *)&p1, sizeof p1);
++        ASSERT(g_signed_count == mid, "per-slice: a repeated nonce is still rejected");
++        ASSERT(strstr((char *)g_write_buf, "\"value\":\"17\"") != NULL, "per-slice: signs the slice amount");
++    }
++
+     /* IDLE-gate helper */
+     uint8_t adv_idle[6] = {0xFF, 0xFF, 0, 0, 15, 0};
+     uint8_t adv_busy[6] = {0xFF, 0xFF, 0, 0, 15, 1};
+-- 
+2.49.0
+

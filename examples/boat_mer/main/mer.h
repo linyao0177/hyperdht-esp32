@@ -10,6 +10,9 @@
 #include "boat_types.h"
 #include "hdht.h"
 
+// boat_pal_time() below this is seconds since boot: SNTP has not set the clock yet
+#define MER_CLOCK_SET 1700000000u
+
 extern hdht_t dht;
 extern boat_keypair_t kp;
 
@@ -52,5 +55,17 @@ signer_serve (hdht_stream_t *stream);
 
 void
 x402_start (void);
+
+// x402_sell.c: the device sells its readings over HTTP with x402 (CONFIG_MER_X402_SELL_PORT)
+
+bool
+x402_sell_enabled (void);
+
+void
+x402_sell_start (void);
+
+// main.c: a reading attested by MER, as a DID dial gets it; its length, or 0
+int
+attested_reading (char *msg, size_t cap);
 
 #endif

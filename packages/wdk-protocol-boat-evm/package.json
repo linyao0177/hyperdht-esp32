@@ -6,14 +6,20 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./package": "./package.json"
+    "./x402": "./x402.js",
+    "./package": "./package.json",
+    "./paymaster": "./paymaster.js"
   },
   "files": [
     "index.js",
+    "x402.js",
+    "paymaster.js",
     "src"
   ],
   "scripts": {
-    "test": "node tests/run.js"
+    "test": "node tests/run.js",
+    "test:aa": "node tests/aa.js",
+    "test:x402-device": "node tests/x402-device.js"
   },
   "dependencies": {
     "boat-peer": "file:../boat-peer"
@@ -22,10 +28,15 @@
     "@tetherto/wdk-wallet-evm": "1.0.0-beta.24"
   },
   "devDependencies": {
+    "@account-abstraction/contracts": "0.7.0",
+    "@openzeppelin/contracts": "5.0.2",
+    "@pimlico/alto": "0.0.21",
     "@tetherto/wdk": "1.0.0-beta.22",
     "@tetherto/wdk-wallet-evm": "1.0.0-beta.24",
+    "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.24",
     "@x402/core": "2.30.0",
     "@x402/evm": "2.30.0",
+    "@x402/fetch": "2.30.0",
     "bare": "1.36.2",
     "hyperdht": "6.35.0"
   },

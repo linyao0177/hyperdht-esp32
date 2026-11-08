@@ -2,7 +2,7 @@
 
 [`examples/uart_module`](../examples/uart_module) turns the ESP32-C3 into a network module. A host MCU uses it the way it would use an AT-command WiFi module: one text command per line over a serial port. The module handles WiFi, its identity, peer-to-peer connections by DID, signed records and topic lookup. The host needs no network stack and no cryptography of its own.
 
-Version: `hdht-module/0.6.1`.
+Version: `hdht-module/0.6.2`.
 
 ## Wiring
 
@@ -57,6 +57,7 @@ Commands marked **DHT** in the tables below answer `ERROR:not ready` until `+REA
 | `AT+CRED=<id>,<issuer did>,<iat>,<model>,<signature>` | — | Stores a manufacturer credential for this module ([credentials.md](credentials.md)) after checking its signature, that it is for this module's key, and, if `CONFIG_MODULE_ISSUER` is set, the issuer. Kept in NVS |
 | `AT+CRED?` | `+CRED:<credential JSON>`, or nothing | Put it in your record as `"cred":<JSON>` with `AT+PUTT`, so verifiers find it |
 | `AT+CRED=` | — | Forgets it |
+| `AT+CHECK=<did>[,<issuer did>]` | — | **DHT**. Checks another device's credential: its record, the signature, the issuer (given here, else `CONFIG_MODULE_ISSUER`), and the issuer's revocations. Then `+CHECK:<did>,<result>,<issuer did>,<model>,<reason>`, the reason last because it may contain commas; result 0 is genuine, the others are in [hdht_cred.h](../components/hdht_cred/include/hdht_cred.h) |
 
 ### Connections
 
