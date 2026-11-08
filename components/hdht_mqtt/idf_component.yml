@@ -1,0 +1,11 @@
+version: "0.1.0"
+description: MQTT over HyperDHT for esp-mqtt; reach an MQTT node by public key or network name, no IP address or certificate
+url: https://github.com/linyao0177/hyperdht-esp32/tree/main/components/hdht_mqtt
+repository: https://github.com/linyao0177/hyperdht-esp32.git
+license: MIT
+targets:
+  - esp32c3
+dependencies:
+  idf: ">=5.3"
+  espressif/libsodium: "^1.0.20"
+  tlay/hdht: "0.1.0"

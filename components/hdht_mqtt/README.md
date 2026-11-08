@@ -1,0 +1,27 @@
+# hdht_mqtt
+
+MQTT over HyperDHT for ESP-IDF's esp-mqtt. It is an `esp_transport` that carries esp-mqtt's bytes over an encrypted HyperDHT stream instead of TCP. A device reaches an MQTT node ([`packages/boat-mqtt-node`](../../packages/boat-mqtt-node)) by public key, through NATs, with no broker address, password or certificate. The node knows the device by the key it proved in the Noise handshake: the default key pair of the `hdht_t`.
+
+```c
+// on the hdht task, once bootstrapped
+esp_transport_handle_t t = hdht_mqtt_transport_new(&dht, NULL);
+esp_mqtt_client_config_t cfg = {
+  .broker.address.hostname = "boat-mqtt",   // a network name, or a node's public key in hex
+  .network.transport = t,
+  .network.timeout_ms = 30000,              // a lookup and a holepunch, not a TCP handshake
+  .credentials.client_id = my_public_key_hex, // nodes want it to start with the key
+};
+esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
+esp_mqtt_client_start(client);
+```
+
+The rest is esp-mqtt as usual: `esp_mqtt_client_publish`, `esp_mqtt_client_subscribe` and events, from any task.
+
+- **Finding a node.** The hostname is either a node's public key in hex (64 characters) or a network name. For a name, the transport looks up BLAKE2b-256(name) (`hdht_mqtt_topic`) and dials the nodes it finds, in random order, until one opens. Each reconnect looks up again, so the device moves to another node when its node goes away. The node it just lost is tried last, since its announcement stays on the DHT for up to 20 minutes. The port is ignored.
+- **Threads.** esp-mqtt calls the transport from its own task. The transport never touches hdht from there: it sets a command, wakes the hdht loop with `uv_async_send` and waits on an event group. Bytes go through two FreeRTOS stream buffers (4 KB in, 2 KB out by default, `hdht_mqtt_config_t`). Create the transport on the hdht task. `esp_mqtt_client_destroy` destroys it; call that from any task except the hdht task.
+- **Status.** `hdht_mqtt_get_info` reports the node, how many nodes the lookup found, lookup and connect times, whether the stream is relayed, and the last error.
+- **Relays.** A device behind a random NAT uses `hdht_set_relay` as with any hdht connection; the transport needs nothing more.
+
+If esp-mqtt falls a whole rx buffer behind, the transport closes the connection rather than drop part of an MQTT packet, and esp-mqtt reconnects.
+
+See [`examples/mqtt_p2p`](../../examples/mqtt_p2p) for a device that publishes telemetry and answers commands, and the measurements.
