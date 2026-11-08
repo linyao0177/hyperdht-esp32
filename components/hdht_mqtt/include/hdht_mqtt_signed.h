@@ -34,4 +34,30 @@ hdht_mqtt_sign (const uint8_t secret_key[64], const char *topic, uint64_t seq, c
 int
 hdht_mqtt_open (const uint8_t public_key[32], const char *topic, const uint8_t *msg, size_t len, uint64_t *seq, const uint8_t **payload, size_t *payload_len);
 
+// Receipts (packages/boat-mqtt-node/lib/receipts.js): a hop's signed word on
+// which of a device's signed messages it got, one text line:
+//
+//   boat-receipt/1|<signer>|<device>|<count>|<bytes>|<ranges a-b;c-d>|<t ms>|<signature>
+//
+// the signature by signer over everything before the last '|'.
+
+typedef struct {
+  uint8_t signer[32];
+  uint8_t device[32];
+  uint64_t count, bytes; // signed messages and payload bytes the signer got
+  uint64_t t;            // unix ms
+  uint32_t ranges;
+} hdht_mqtt_receipt_t;
+
+// 0 when line is a receipt signed by signer, for device (NULL: any device).
+int
+hdht_mqtt_receipt_open (const uint8_t signer[32], const uint8_t *device, const char *line, size_t len, hdht_mqtt_receipt_t *out);
+
+// Against what the device sent, sequence numbers lo..hi: *covered = how many
+// of them the receipt names, *beyond = how many it names above hi (messages
+// the device never sent: the signer's word against itself). Ranges below lo
+// (earlier boots) are left out. Check the receipt with _open first.
+int
+hdht_mqtt_receipt_check (const char *line, size_t len, uint64_t lo, uint64_t hi, uint64_t *covered, uint64_t *beyond);
+
 #endif

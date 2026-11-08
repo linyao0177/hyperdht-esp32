@@ -29,4 +29,6 @@ If esp-mqtt falls a whole rx buffer behind, the transport closes the connection 
 
 A node checks who publishes, but a node is anyone's machine: it, or a bridge, could change a message or play an old one again. [`hdht_mqtt_signed.h`](include/hdht_mqtt_signed.h) adds the publisher's own Ed25519 signature over the topic, a sequence number and the payload (74 bytes per message). A subscriber checks it against the key in the topic, whatever node the message came through, and refuses a sequence number it has seen (`SignedInbox` in `packages/boat-mqtt-node`). `signed.c` is plain C over libsodium and is checked against the JS on the desktop (`test/test_signed.c`, run by the package's tests). Signing takes 20–25 ms on the C3.
 
+`hdht_mqtt_receipt_open` and `hdht_mqtt_receipt_check` read a node's signed receipt: what it says it got from the device, compared with what the device sent. A receipt that names a sequence number the device never sent is the node's signed word against itself.
+
 See [`examples/mqtt_p2p`](../../examples/mqtt_p2p) for a device that publishes telemetry and answers commands, and the measurements.
