@@ -9,6 +9,7 @@
 //   one. Each buffer has one writer task and one reader task, as FreeRTOS
 //   stream buffers need.
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -73,6 +74,8 @@ typedef struct {
   hdht_stream_t stream;
   uint8_t lost[32]; // the node of the last open connection: tried last next time
   bool has_lost;
+  uint8_t listed[HDHT_MQTT_NODELIST_PAGE][32]; // hdht_mqtt_transport_set_nodes
+  size_t listed_len;
   bool destroy_pending;
   bool free_on_destroyed; // destroyed from the hdht task itself: nobody waits
   uint8_t chunk[WRITE_CHUNK];
@@ -195,6 +198,26 @@ dial_next (ctx_t *c) {
   become_idle(c, HDHT_CONNECT_EPEER_NOT_FOUND);
 }
 
+// random order, spreading devices over nodes; the node we just lost goes last
+static void
+order_candidates (ctx_t *c) {
+  for (size_t i = c->candidates_len; i > 1; i--) {
+    size_t j = randombytes_uniform((uint32_t) i);
+    uint8_t tmp[32];
+    memcpy(tmp, c->candidates[i - 1], 32);
+    memcpy(c->candidates[i - 1], c->candidates[j], 32);
+    memcpy(c->candidates[j], tmp, 32);
+  }
+  for (size_t i = 0; c->has_lost && i + 1 < c->candidates_len; i++) {
+    if (memcmp(c->candidates[i], c->lost, 32) != 0) continue;
+    uint8_t tmp[32];
+    memcpy(tmp, c->candidates[i], 32);
+    memmove(c->candidates[i], c->candidates[i + 1], (c->candidates_len - i - 1) * 32);
+    memcpy(c->candidates[c->candidates_len - 1], tmp, 32);
+    break;
+  }
+}
+
 static void
 on_lookup (hdht_t *dht, int status, const uint8_t (*peers)[32], size_t len, void *data) {
   (void) dht;
@@ -208,21 +231,7 @@ on_lookup (hdht_t *dht, int status, const uint8_t (*peers)[32], size_t len, void
 
   c->candidates_len = len < HDHT_LOOKUP_MAX_PEERS ? len : HDHT_LOOKUP_MAX_PEERS;
   memcpy(c->candidates, peers, c->candidates_len * 32);
-  for (size_t i = c->candidates_len; i > 1; i--) { // random order, spreading devices over nodes
-    size_t j = randombytes_uniform((uint32_t) i);
-    uint8_t tmp[32];
-    memcpy(tmp, c->candidates[i - 1], 32);
-    memcpy(c->candidates[i - 1], c->candidates[j], 32);
-    memcpy(c->candidates[j], tmp, 32);
-  }
-  for (size_t i = 0; c->has_lost && i + 1 < c->candidates_len; i++) { // the node we just lost goes last
-    if (memcmp(c->candidates[i], c->lost, 32) != 0) continue;
-    uint8_t tmp[32];
-    memcpy(tmp, c->candidates[i], 32);
-    memmove(c->candidates[i], c->candidates[i + 1], (c->candidates_len - i - 1) * 32);
-    memcpy(c->candidates[c->candidates_len - 1], tmp, 32);
-    break;
-  }
+  order_candidates(c);
   c->next = 0;
   dial_next(c);
 }
@@ -239,6 +248,15 @@ start_connect (ctx_t *c) {
   if (c->by_key) {
     memcpy(c->candidates[0], c->key, 32);
     c->candidates_len = 1;
+    c->next = 0;
+    dial_next(c);
+    return;
+  }
+  if (c->listed_len > 0) { // the node list: no lookup
+    size_t n = c->listed_len < HDHT_LOOKUP_MAX_PEERS ? c->listed_len : HDHT_LOOKUP_MAX_PEERS;
+    memcpy(c->candidates, c->listed, n * 32);
+    c->candidates_len = n;
+    order_candidates(c);
     c->next = 0;
     dial_next(c);
     return;
@@ -485,4 +503,128 @@ fail:
   if (c->ev) vEventGroupDelete(c->ev);
   free(c);
   return NULL;
+}
+
+void
+hdht_mqtt_transport_set_nodes (esp_transport_handle_t t, const uint8_t (*nodes)[32], size_t n) {
+  ctx_t *c = ctx_of(t);
+  if (n > HDHT_MQTT_NODELIST_PAGE) n = HDHT_MQTT_NODELIST_PAGE;
+  if (n) memcpy(c->listed, nodes, n * 32);
+  c->listed_len = n;
+}
+
+// ---- the node list: the trusted verifiers' records, tallied ----
+
+typedef struct fetch_s fetch_t;
+
+typedef struct {
+  fetch_t *f;
+  size_t i;
+} fetch_slot_t;
+
+struct fetch_s {
+  hdht_t *dht;
+  size_t n, left;
+  uint32_t pick;
+  uint8_t tries; // pages tried
+  size_t votes;
+  hdht_mqtt_nodelist_cb cb;
+  void *data;
+  uint8_t *blobs[HDHT_MQTT_NODELIST_VERIFIERS];
+  size_t lens[HDHT_MQTT_NODELIST_VERIFIERS];
+  fetch_slot_t slots[HDHT_MQTT_NODELIST_VERIFIERS];
+  hdht_mqtt_nodelist_t list;
+};
+
+static void
+fetch_free (fetch_t *f) {
+  for (size_t i = 0; i < f->n; i++) free(f->blobs[i]);
+  free(f);
+}
+
+static void fetch_page (fetch_t *f);
+
+static void
+on_page (hdht_t *dht, int status, const uint8_t *value, size_t len, void *data) {
+  (void) dht;
+  fetch_t *f = data;
+  uint8_t index = (uint8_t) ((f->pick + f->tries - 1) % f->list.pages_len);
+  if (status == 0 && hdht_mqtt_nodelist_decode_page(value, len, index, &f->list) == 0) {
+    f->cb(0, &f->list, f->votes, f->data);
+    fetch_free(f);
+    return;
+  }
+  fetch_page(f);
+}
+
+static void
+fetch_page (fetch_t *f) {
+  if (f->tries >= f->list.pages_len) {
+    f->cb(-1, NULL, 0, f->data);
+    fetch_free(f);
+    return;
+  }
+  uint8_t index = (uint8_t) ((f->pick + f->tries) % f->list.pages_len);
+  f->tries++;
+  if (hdht_immutable_get(f->dht, f->list.pages[index], on_page, f) != 0) fetch_page(f);
+}
+
+static void
+fetch_done (fetch_t *f) {
+  size_t votes = 0;
+  if (hdht_mqtt_nodelist_tally((const uint8_t *const *) f->blobs, f->lens, f->n, f->n, &f->list, &votes) != 0) {
+    f->cb(-1, NULL, 0, f->data);
+    fetch_free(f);
+    return;
+  }
+  f->votes = votes;
+  if (f->list.pages_len == 0) { // a list with no nodes
+    f->cb(0, &f->list, votes, f->data);
+    fetch_free(f);
+    return;
+  }
+  fetch_page(f);
+}
+
+static void
+on_list_record (hdht_t *dht, int status, uint64_t seq, const uint8_t *value, size_t len, void *data) {
+  (void) dht;
+  (void) seq;
+  fetch_slot_t *s = data;
+  fetch_t *f = s->f;
+  if (status == 0) {
+    uint8_t *b = malloc(HDHT_MUTABLE_MAX_VALUE);
+    int n = b ? hdht_mqtt_nodelist_from_record(value, len, b, HDHT_MUTABLE_MAX_VALUE) : -1;
+    if (n > 0) {
+      f->blobs[s->i] = b;
+      f->lens[s->i] = (size_t) n;
+    } else {
+      free(b);
+    }
+  }
+  if (--f->left == 0) fetch_done(f);
+}
+
+int
+hdht_mqtt_nodelist_fetch (hdht_t *dht, const uint8_t (*trusted)[32], size_t n, uint32_t pick, hdht_mqtt_nodelist_cb cb, void *data) {
+  if (n == 0 || n > HDHT_MQTT_NODELIST_VERIFIERS) return -1;
+  fetch_t *f = calloc(1, sizeof(*f));
+  if (f == NULL) return -1;
+  f->dht = dht;
+  f->n = n;
+  f->left = n;
+  f->pick = pick;
+  f->cb = cb;
+  f->data = data;
+  size_t failed = 0;
+  for (size_t i = 0; i < n; i++) {
+    f->slots[i] = (fetch_slot_t) { f, i };
+    if (hdht_mutable_get(dht, trusted[i], 0, on_list_record, &f->slots[i]) != 0) failed++;
+  }
+  // the ones that could not start count as answered with nothing
+  if (failed) {
+    f->left -= failed;
+    if (f->left == 0) fetch_done(f);
+  }
+  return 0;
 }

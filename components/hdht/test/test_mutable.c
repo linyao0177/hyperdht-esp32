@@ -2,6 +2,7 @@
 //
 //   test_mutable <host:port | public> put <hex seed> <seq> <value>
 //   test_mutable <host:port | public> get <hex public key> [min seq]
+//   test_mutable <host:port | public> iget <hex hash>   (an immutable record)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,8 @@ static uint8_t public_key[32], secret_key[64];
 static uint64_t seq;
 static const char *value;
 static bool put;
+static bool iget;
+static uint8_t hash[32];
 
 static void
 on_destroyed (hdht_t *d) {
@@ -41,9 +44,20 @@ on_get (hdht_t *d, int status, uint64_t s, const uint8_t *v, size_t len, void *d
 }
 
 static void
+on_iget (hdht_t *d, int status, const uint8_t *v, size_t len, void *data) {
+  (void) data;
+  printf("iget status=%d len=%zu value=", status, len);
+  for (size_t i = 0; i < len; i++) printf("%02x", v[i]);
+  printf("\n");
+  exit_code = status == 0 ? 0 : 1;
+  hdht_destroy(d, on_destroyed);
+}
+
+static void
 on_ready (hdht_t *d, int status) {
   printf("bootstrapped status=%d table=%u\n", status, d->table_len);
-  int err = put
+  int err = iget ? hdht_immutable_get(d, hash, on_iget, NULL)
+          : put
               ? hdht_mutable_put(d, public_key, secret_key, seq, (const uint8_t *) value, strlen(value), on_put, NULL)
               : hdht_mutable_get(d, public_key, seq, on_get, NULL);
   if (err) {
@@ -61,6 +75,8 @@ main (int argc, char **argv) {
   }
 
   put = strcmp(argv[2], "put") == 0;
+  iget = strcmp(argv[2], "iget") == 0;
+  if (iget && sodium_hex2bin(hash, 32, argv[3], strlen(argv[3]), NULL, NULL, NULL) != 0) return 1;
   uint8_t key[32];
   if (sodium_hex2bin(key, 32, argv[3], strlen(argv[3]), NULL, NULL, NULL) != 0) return 1;
 

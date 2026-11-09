@@ -40,6 +40,7 @@
 #include "esp_transport.h"
 #include "hdht.h"
 #include "hdht_mqtt_signed.h"
+#include "hdht_mqtt_nodelist.h"
 
 typedef struct {
   size_t rx_buffer; // bytes from the node not yet read by esp-mqtt; default 4096
@@ -66,5 +67,33 @@ typedef struct {
 
 void
 hdht_mqtt_get_info (esp_transport_handle_t t, hdht_mqtt_info_t *info);
+
+// Dial these nodes (in random order, the one just lost last) instead of
+// looking up the hostname's network; n = 0 goes back to lookups. A hostname
+// that is a key is still dialed as it is. Call on the hdht task; it applies
+// from the next connect.
+void
+hdht_mqtt_transport_set_nodes (esp_transport_handle_t t, const uint8_t (*nodes)[32], size_t n);
+
+typedef void (*hdht_mqtt_nodelist_cb)(int status, const hdht_mqtt_nodelist_t *list, size_t votes, void *data);
+
+// Reads the records of the n trusted verify keys (n <= HDHT_MQTT_NODELIST_VERIFIERS),
+// tallies them (hdht_mqtt_nodelist.h) and reads page pick % pages of the
+// agreed list (another one when that page cannot be had): cb on the hdht
+// task with status 0 and the list, or -1. Returns -1 when it cannot start.
+int
+hdht_mqtt_nodelist_fetch (hdht_t *dht, const uint8_t (*trusted)[32], size_t n, uint32_t pick, hdht_mqtt_nodelist_cb cb, void *data);
+
+typedef void (*hdht_mqtt_nodelist_ready_cb)(bool taken, void *data);
+
+// Keeps the transport on the node list: trusts the verify keys kept in NVS
+// (namespace nvs_namespace, key "verifiers"), else the comma-separated hex
+// keys in `verifiers`; fetches the list now and every 10 minutes, page pick %
+// pages, hands its nodes to the transport, and moves to the verifiers an
+// agreed list names (saved in NVS). ready(taken) once, after the first fetch:
+// start esp-mqtt then. Returns -1 with no verifiers to trust (then look up
+// the network name as before). On the hdht task; one keeper per device.
+int
+hdht_mqtt_nodelist_keep (hdht_t *dht, esp_transport_handle_t transport, const char *nvs_namespace, const char *verifiers, uint32_t pick, hdht_mqtt_nodelist_ready_cb ready, void *data);
 
 #endif

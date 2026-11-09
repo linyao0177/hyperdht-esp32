@@ -20,7 +20,8 @@ The same sources build in two ways:
 | Topics (`hdht_lookup`, `hdht_announce`, `hdht_unannounce`): find the keys announced under a topic, and announce our own | Done; interoperates with hyperdht's `lookup` / `announce` and Hyperswarm |
 | Holepunching | Consistent ↔ consistent NATs, and local consistent ↔ remote random (random-port probing). A **random NAT on the device's side** cannot be holepunched, because hyperdht opens up to 256 sockets for that: use a relay |
 | Blind relay (`hdht_set_relay`, and the peer's `relayThrough`) | Done, as client and server, with hyperdht's `relayThrough` and blind-relay servers. Holepunching runs alongside, and a relayed stream moves to the direct path when it gets through. The relay node must be reachable on the main socket |
-| Not implemented | immutable put/get, upgrading a relayed connection to direct, reusable sockets, IPv6 |
+| Immutable records (`hdht_immutable_get`): a value stored under its BLAKE2b-256 hash, checked against it | Get done (put not yet); reads what hyperdht's `immutablePut` stores, checked on the public DHT |
+| Not implemented | immutable put, upgrading a relayed connection to direct, reusable sockets, IPv6 |
 
 ## API
 
@@ -53,6 +54,8 @@ hdht_stream_destroy(&stream, 0);             // immediate close
 // mutable records: a signed value stored under a public key
 hdht_mutable_put(&dht, public_key, secret_key, seq, value, len, on_put, user_data);
 hdht_mutable_get(&dht, public_key, min_seq, on_get, user_data);
+// immutable records: a value under its hash
+hdht_immutable_get(&dht, hash, on_iget, user_data);
 
 // topics: who announced under a topic (for example a Hyperswarm topic), and
 // announcing ourselves (again about every 10 min; nodes keep it 20 min)

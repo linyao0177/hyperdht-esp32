@@ -13,3 +13,7 @@ CONFIG_EXAMPLE_PROVIDE_WIFI_CONSOLE_CMD=n
 
 # the default of 6 drops bursts while the loop is busy (research/phase0/README.md)
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=32
+
+# keep reconnecting to Wi-Fi however long the access point is gone
+# (the example helper gives up after 6 tries and stays offline)
+CONFIG_EXAMPLE_WIFI_CONN_MAX_RETRY=1000000000

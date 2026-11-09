@@ -295,6 +295,12 @@ A node that charges puts its terms (payee, token, price per message and per KB, 
 - only the payee and token in the node's signed terms, and only in its buyer's token and EIP-712 domain (`CONFIG_MER_BUYER_*`). That also leaves MER's single global domain as the buyer set it, and the payment is signed on the hdht task like the buyer's;
 - at most what it counted itself plus the node's stated credit, and at most `CONFIG_MER_MQTT_MAX_PAY` at once.
 
+The owner can move the device to another node over its owner channel: `{"op":"mqtt_node","node":"<key>"}` keeps it in NVS, in place of `CONFIG_MER_MQTT_NODE`. This is the last step of onboarding in [`packages/boat-registry`](../../packages/boat-registry#onboarding-a-device).
+
+With `CONFIG_MER_MQTT_VERIFIERS` (comma-separated verify keys), the device uses the node list instead: it connects only to staked nodes that a quorum of those verifiers lists (`hdht_mqtt_nodelist_keep`, see [`packages/boat-registry`](../../packages/boat-registry#the-node-list)).
+
+The device can also ask for a job on its own data and pay for it from its balance on the registry. Over the owner channel, `{"op":"post_job",...}` brings the terms. The device puts in its own DID, checks the budget against `CONFIG_MER_JOB_MAX_BUDGET` and the deadline (within a day), hashes the request as `BoatRegistry.jobRequestStatement` does, and signs it with MER's key. Anyone relays it with `postJobFromDevice` ([`examples/device-job.js`](../../packages/boat-registry/examples/device-job.js)).
+
 The node checks each payment against the device's DID record and stops taking its messages while more than the credit is unpaid. `packages/wdk-protocol-boat-evm/examples/mqtt-node.js` runs such a node and settles the payments from a WDK account in Multicall3 batches.
 
 On the board, with an anvil fork of the Stable testnet (USD₮0), two runs of 5 minutes, at 100 µUSD₮0 per message plus 1000 per KB:

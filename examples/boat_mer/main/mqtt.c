@@ -31,6 +31,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "mqtt_client.h"
+#include "nvs.h"
 
 #include "boat_crypto.h"
 #include "boat_pay.h"
@@ -41,7 +42,7 @@
 
 typedef struct {
   char topic[160];
-  char *payload; // heap; NULL: attest a reading and publish it as telemetry
+  char *payload; // heap; NULL: attest a reading and publish it as telemetry (len 0), or move to `target` (len -1)
   int len;
 } out_t;
 
@@ -55,6 +56,7 @@ typedef struct {
 } terms_t;
 
 static esp_transport_handle_t transport;
+static char target[80]; // the node or network: the owner's choice (NVS), else CONFIG_MER_MQTT_NODE
 static esp_mqtt_client_handle_t client;
 static QueueHandle_t outbox;
 static uv_async_t wake;
@@ -75,9 +77,24 @@ static uint64_t own_msgs, own_bytes, own_paid; // msgs and bytes: also mqtt_out,
 static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t paid_count, refused_count;
 
+static void
+load_target (void) {
+  if (target[0]) return;
+  nvs_handle_t nvs;
+  size_t len = sizeof(target);
+  if (nvs_open("mer_mqtt", NVS_READONLY, &nvs) == ESP_OK) {
+    if (nvs_get_str(nvs, "node", target, &len) != ESP_OK) target[0] = '\0';
+    nvs_close(nvs);
+  }
+  if (!target[0]) snprintf(target, sizeof(target), "%s", CONFIG_MER_MQTT_NODE);
+  // a node list with no node named: the network name is the fallback
+  if (!target[0] && strlen(CONFIG_MER_MQTT_VERIFIERS) >= 64) snprintf(target, sizeof(target), "boat-mqtt");
+}
+
 bool
 mqtt_enabled (void) {
-  return CONFIG_MER_MQTT_NODE[0] != '\0';
+  load_target();
+  return target[0] != '\0';
 }
 
 static uint64_t
@@ -142,7 +159,7 @@ static void
 out_task (void *arg) {
   (void) arg;
   esp_mqtt_client_config_t cfg = {
-    .broker.address.hostname = CONFIG_MER_MQTT_NODE,
+    .broker.address.hostname = target,
     .network.transport = transport,
     .network.timeout_ms = 30000,
     .network.reconnect_timeout_ms = 5000,
@@ -153,13 +170,21 @@ out_task (void *arg) {
   client = esp_mqtt_client_init(&cfg);
   esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, on_event, NULL);
   esp_mqtt_client_start(client);
-  printf("MER|mqtt starting, node %s\n", CONFIG_MER_MQTT_NODE);
+  printf("MER|mqtt starting, node %.20s\n", target);
   out_t o;
   static char reading[MAX_MSG];
   char telemetry[100];
   snprintf(telemetry, sizeof(telemetry), "d/%s/telemetry", me);
   for (;;) {
     if (xQueueReceive(outbox, &o, portMAX_DELAY) != pdTRUE) continue;
+    if (o.payload == NULL && o.len == -1) { // the owner chose another node
+      esp_mqtt_client_stop(client);
+      connected = false;
+      esp_mqtt_set_config(client, &cfg);
+      esp_mqtt_client_start(client);
+      printf("MER|mqtt moving to node %.20s\n", target);
+      continue;
+    }
     if (o.payload == NULL) { // a reading, attested here rather than on the hdht task
       int len = connected ? attested_reading(reading, sizeof(reading)) : 0;
       if (len > 0 && esp_mqtt_client_publish(client, telemetry, reading, len, 1, 0) >= 0) {
@@ -309,6 +334,33 @@ mqtt_tick (uint32_t ticks) {
   }
 }
 
+// the hdht task (signer.c)
+bool
+mqtt_set_node (const char *node) {
+  if (strlen(node) >= sizeof(target)) return false;
+  nvs_handle_t nvs;
+  if (nvs_open("mer_mqtt", NVS_READWRITE, &nvs) != ESP_OK) return false;
+  esp_err_t err = nvs_set_str(nvs, "node", node);
+  if (err == ESP_OK) err = nvs_commit(nvs);
+  nvs_close(nvs);
+  if (err != ESP_OK) return false;
+  bool running = transport != NULL;
+  snprintf(target, sizeof(target), "%s", node); // read by esp-mqtt only after the stop below
+  if (!running) {
+    mqtt_start();
+    return true;
+  }
+  out_t o = {.payload = NULL, .len = -1};
+  return xQueueSend(outbox, &o, 0) == pdTRUE;
+}
+
+static void
+on_list_ready (bool taken, void *data) {
+  (void) taken;
+  (void) data;
+  xTaskCreate(out_task, "mqtt_out", 6144, NULL, 3, NULL); // below the hdht task (5)
+}
+
 void
 mqtt_start (void) {
   if (!mqtt_enabled() || transport) return;
@@ -316,5 +368,9 @@ mqtt_start (void) {
   uv_async_init(dht.loop, &wake, on_wake);
   transport = hdht_mqtt_transport_new(&dht, NULL);
   outbox = xQueueCreate(8, sizeof(out_t));
-  xTaskCreate(out_task, "mqtt_out", 6144, NULL, 3, NULL); // below the hdht task (5)
+  // the node list (CONFIG_MER_MQTT_VERIFIERS): esp-mqtt starts once it is read;
+  // our key picks the page
+  const uint8_t *pk = kp.ed25519_pk;
+  uint32_t pick = ((uint32_t) pk[0] << 24) | ((uint32_t) pk[1] << 16) | ((uint32_t) pk[2] << 8) | pk[3];
+  if (hdht_mqtt_nodelist_keep(&dht, transport, "mer_mqtt", CONFIG_MER_MQTT_VERIFIERS, pick, on_list_ready, NULL) != 0) on_list_ready(false, NULL);
 }

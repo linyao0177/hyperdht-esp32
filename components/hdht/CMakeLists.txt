@@ -12,6 +12,7 @@ set(HDHT_SOURCES
   src/holepunch.c
   src/lookup.c
   src/messages.c
+  src/immutable.c
   src/mutable.c
   src/noise.c
   src/relay.c

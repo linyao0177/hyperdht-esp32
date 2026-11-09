@@ -12,3 +12,7 @@ CONFIG_LWIP_UDP_RECVMBOX_SIZE=32
 CONFIG_EXAMPLE_CONNECT_WIFI=y
 CONFIG_EXAMPLE_CONNECT_IPV6=n
 CONFIG_EXAMPLE_PROVIDE_WIFI_CONSOLE_CMD=n
+
+# keep reconnecting to Wi-Fi however long the access point is gone
+# (the example helper gives up after 6 tries and stays offline)
+CONFIG_EXAMPLE_WIFI_CONN_MAX_RETRY=1000000000

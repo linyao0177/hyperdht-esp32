@@ -69,6 +69,14 @@ config MER_SIGNER_MAX_VALUE
     int "Most base units of the token the device signs over in one authorization for its owner"
     default 100000
 
+config MER_JOB_MAX_BUDGET
+    int "Most a job the device asks for may cost, in base units of the registry's token"
+    default 100000000
+    help
+        The device signs its own job requests (owner op post_job) for
+        BoatRegistry.postJobFromDevice up to this budget. The budget comes from
+        the device's balance on the registry, which its owner funds.
+
 config MER_SOL_MINT
     string "Solana SPL token mint the device signs transfers of for its owner (base58), empty for none"
     default ""
@@ -156,6 +164,16 @@ config MER_MQTT_NODE
         Publish attested readings to an MQTT network over HyperDHT
         (packages/boat-mqtt-node) and pay the node per message with EIP-3009
         authorizations, in the buyer's token and domain (CONFIG_MER_BUYER_*).
+
+config MER_MQTT_VERIFIERS
+    string "Verify keys of the verifiers to trust for the MQTT node list"
+    default ""
+    help
+        Comma-separated verify keys (hex) of verifier nodes
+        (packages/boat-registry). When set, the device connects only to the
+        staked nodes a quorum of them lists (components/hdht_mqtt node list),
+        reading the list again every 10 minutes. Empty: CONFIG_MER_MQTT_NODE
+        (or the node the owner set) as before.
 
 config MER_MQTT_INTERVAL_S
     int "Seconds between readings published over MQTT"

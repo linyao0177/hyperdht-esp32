@@ -83,4 +83,8 @@ mqtt_start (void); // once our DID record is out
 void
 mqtt_tick (uint32_t ticks); // once a second
 
+// the owner's choice of node (signer.c): kept in NVS, used from now on
+bool
+mqtt_set_node (const char *node);
+
 #endif

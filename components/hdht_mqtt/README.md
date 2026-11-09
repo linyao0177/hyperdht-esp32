@@ -19,6 +19,15 @@ The rest is esp-mqtt as usual: `esp_mqtt_client_publish`, `esp_mqtt_client_subsc
 
 - **Finding a node.** The hostname is either a node's public key in hex (64 characters) or a network name. For a name, the transport looks up BLAKE2b-256(name) (`hdht_mqtt_topic`) and dials the nodes it finds, in random order, until one opens. Each reconnect looks up again, so the device moves to another node when its node goes away. The node it just lost is tried last, since its announcement stays on the DHT for up to 20 minutes. The port is ignored.
 - **Threads.** esp-mqtt calls the transport from its own task. The transport never touches hdht from there: it sets a command, wakes the hdht loop with `uv_async_send` and waits on an event group. Bytes go through two FreeRTOS stream buffers (4 KB in, 2 KB out by default, `hdht_mqtt_config_t`). Create the transport on the hdht task. `esp_mqtt_client_destroy` destroys it; call that from any task except the hdht task.
+- **Node list.**
+    - `hdht_mqtt_nodelist_keep` keeps the transport on the staked nodes a quorum of trusted verifiers lists:
+        1. It reads their HyperDHT records and takes the main record a quorum put out byte for byte (2 of 3, or ceil(2n/3)).
+        2. It reads one page of nodes, an immutable record checked against its hash, chosen by the device's key.
+        3. It hands those nodes to the transport, which then dials them with no lookup.
+        4. It does this again every 10 minutes, and moves to the verifiers an agreed list names, keeping them in NVS.
+    - The device needs no chain, and one verifier alone cannot steer it.
+    - Lower down: `hdht_mqtt_nodelist_fetch` and `hdht_mqtt_transport_set_nodes`.
+    - Verifier nodes publish the list (`packages/boat-registry`, `lib/nodelist.js`). The decoding and tally in `nodelist.c` are checked against the JS on the desktop (`test/test_nodelist.c`).
 - **Status.** `hdht_mqtt_get_info` reports the node, how many nodes the lookup found, lookup and connect times, whether the stream is relayed, and the last error.
 - **Relays.** A device behind a random NAT uses `hdht_set_relay` as with any hdht connection; the transport needs nothing more.
 - **Never call esp-mqtt from the hdht task.** esp-mqtt's task holds its API lock while it waits for the hdht task (during a connect, for one), so such a call waits for itself until the connect times out. Hand esp-mqtt calls to another task, as `examples/uart_module` (`main/mqtt.c`) and `examples/boat_mer` do.

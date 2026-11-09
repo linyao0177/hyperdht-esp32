@@ -161,6 +161,14 @@ hdht_mutable_put (hdht_t *dht, const uint8_t public_key[32], const uint8_t secre
 int
 hdht_mutable_get (hdht_t *dht, const uint8_t public_key[32], uint64_t min_seq, hdht_mutable_get_cb cb, void *data);
 
+// Immutable records (hyperdht immutableGet): the value stored under
+// BLAKE2b-256(value), checked against that hash. status is 0 with the value
+// (valid only during the callback), or HDHT_MUTABLE_ENOT_FOUND.
+typedef void (*hdht_immutable_get_cb)(hdht_t *dht, int status, const uint8_t *value, size_t len, void *data);
+
+int
+hdht_immutable_get (hdht_t *dht, const uint8_t hash[32], hdht_immutable_get_cb cb, void *data);
+
 bool
 hdht_mutable_verify (const uint8_t public_key[32], uint64_t seq, const uint8_t *value, size_t len, const uint8_t signature[64]);
 
