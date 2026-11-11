@@ -288,7 +288,7 @@ Found and fixed on the way: the clock was set by SNTP only when `CONFIG_MER_X402
 
 ## MQTT, paid per message (2026-11-08)
 
-With `CONFIG_MER_MQTT_NODE` (a network name, or a node's key), the device joins an MQTT network of nodes anyone can run ([`packages/boat-mqtt-node`](../../packages/boat-mqtt-node)) over HyperDHT ([`components/hdht_mqtt`](../../components/hdht_mqtt)) and publishes an attested reading every `CONFIG_MER_MQTT_INTERVAL_S` to `d/<its key>/telemetry` ([`main/mqtt.c`](main/mqtt.c)). Its DID record gains `"mqtt":"<node key>"`, so apps and other nodes find the node it is on.
+With `CONFIG_MER_MQTT_NODE` (a network name, or a node's key), the device joins an MQTT network of nodes anyone can run ([`packages/boat-mqtt-node`](https://github.com/linyao0177/xid-network/tree/main/packages/boat-mqtt-node)) over HyperDHT ([`components/hdht_mqtt`](../../components/hdht_mqtt)) and publishes an attested reading every `CONFIG_MER_MQTT_INTERVAL_S` to `d/<its key>/telemetry` ([`main/mqtt.c`](main/mqtt.c)). Its DID record gains `"mqtt":"<node key>"`, so apps and other nodes find the node it is on.
 
 A node that charges puts its terms (payee, token, price per message and per KB, credit) in its own DHT record and sends invoices to the device's inbox. The device pays each with an EIP-3009 authorization signed by MER and published to `d/<its key>/to/<node>/pay`. It pays:
 

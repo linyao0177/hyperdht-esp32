@@ -4,6 +4,8 @@
 
 It speaks the hyperdht 6.x wire protocol byte for byte, so the other end can be an unmodified Node.js `hyperdht` app. Hyperswarm apps dial the device with `swarm.joinPeer(publicKey)`, and the device finds and connects to Hyperswarm servers by topic (tested with Hyperswarm on Node.js, and with a Pear app on Bare). A device can also open the same encrypted channel over **Bluetooth LE** with the same key, when there is no internet.
 
+> **Try the network built on it:** the [xid network public testnet](https://iot.xid.network/network/) runs four nodes in four regions (US, EU, Taiwan, Japan), with contracts on Arc testnet. Flash an ESP32-C3 from the browser, or run simulated devices or a node of your own: [docs](https://iot.xid.network/docs/#testnet). Its code is in [xid-network](https://github.com/linyao0177/xid-network).
+
 > **Status: experimental.** Both the client and the server work on real hardware: on the public DHT, through home routers, and across a carrier NAT. The API may still change, and some hyperdht features are missing (see [Limitations](#limitations)).
 
 ```
@@ -185,7 +187,6 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`components/hdht_cred`](components/hdht_cred) | Manufacturer credentials checked on the device: a peer's record, its credential, the issuer's revocations |
 | [`components/hdht_ota`](components/hdht_ota) | Firmware updates from a Hypercore over HyperDHT, every block checked on the device against the publisher's signed tree |
 | [`components/hdht_mqtt`](components/hdht_mqtt) | MQTT over HyperDHT for esp-mqtt: a transport that finds MQTT nodes by network name and dials them by public key |
-| [`components/boat_device`](components/boat_device) | An ESP32 device on the BoAT network in a few calls: identity, staked nodes from the node list, signed and sealed messages, an inbox, receipts |
 | [`components/zk`](components/zk) | Groth16 verification on alt_bn128 (circom/snarkjs proofs) with vendored [mcl](https://github.com/herumi/mcl), and the camera event format that uses it |
 | [`examples/minimal`](examples/minimal) | Start here: a device reachable by key, NVS identity, cross-task data |
 | [`examples/uart_module`](examples/uart_module) | The C3 as a network module: a host MCU drives it with AT-style commands over a serial line ([command reference](docs/module-uart.md)) |
@@ -193,19 +194,18 @@ WiFi + HyperDHT + BLE also run together on one C3, with ~50 KB of heap to spare.
 | [`examples/hyperdht_demo`](examples/hyperdht_demo) | Test firmware: client rounds, then server; optional BLE |
 | [`examples/ble_echo`](examples/ble_echo) | BLE-only SecretStream echo |
 | [`examples/boat_mer`](examples/boat_mer) | With [BoAT MER](https://github.com/TLAY-IO/boat-mer): DID as the HyperDHT address, DID records in the DHT, open anchor nodes found by topic lookup (public testnet), nanopayments over HyperDHT |
-| [`examples/mqtt_p2p`](examples/mqtt_p2p) | esp-mqtt over HyperDHT: telemetry and commands through MQTT nodes anyone can run, no broker address, password or certificate on the device |
-| [`examples/boat_device_min`](examples/boat_device_min) | The smallest BoAT device: a reading every few seconds, signed or sealed, through `components/boat_device` |
 | [`packages/boat-peer`](packages/boat-peer) | The app side of BoAT MER for Node.js, Bare and Pear: DID records, signed readings, and a seller that checks every payment |
 | [`packages/wdk-protocol-boat-evm`](packages/wdk-protocol-boat-evm) | BoAT MER devices for Tether's WDK: a WDK EVM account sells to devices and settles their EIP-3009 payments, one by one or in batches, also from an ERC-4337 account whose gas an operator sponsors; an x402 facilitator, for devices that sell with x402 too |
 | [`packages/wdk-protocol-boat-solana`](packages/wdk-protocol-boat-solana) | The device as a Solana signer for WDK: it signs its own SPL token (USD₮) transfers with a key derived from its DID, a WDK account pays the fee |
 | [`packages/boat-ota`](packages/boat-ota) | Firmware releases in a Hypercore: publish, seed from any peer, fetch and check the way a device does |
-| [`packages/boat-mqtt-node`](packages/boat-mqtt-node) | An MQTT node anyone can run: a broker reached over HyperDHT by public key, announced under a network name, where only the holder of a key publishes under it; bridges, following, signed messages, receipts from every hop, storage nodes with spot checks, pay per message; a gateway in front of NanoMQ |
-| [`packages/boat-registry`](packages/boat-registry) | The on-chain part of that network and `boat-node`, one program for a node in any of the roles: stake and roles, paid jobs settled by a quorum of nodes, rewards that a slash takes, a watchtower that finds faults and slashes them, a node list devices trust without a chain; device onboarding; a pay-to-power demo. Deployed on the Arc testnet |
 | [`apps/pear-seller`](apps/pear-seller) | A Pear app that sells to `examples/boat_mer` devices, settles their payments with a WDK account, and keeps the receipts in a Hypercore |
+| [`tools/release`](tools/release) | The released `uart_module` image and its browser-installer manifest |
 | [`tools/host`](tools/host) | Node.js peers: private testnet, test clients, vector generator, BLE client, BoAT MER seller, anchor node, discovery and verifier, app template peer, module test peers, credential issuer |
 | [`docs`](docs) | Architecture, protocol notes and the feasibility study |
 | [`research/phase0`](research/phase0) | The original feasibility PoC (libsodium and libudx measurements) |
 | [`patches/libudx`](patches/libudx) | The libudx fixes, prepared for upstream |
+
+The network built on this, xid network (staked MQTT nodes, the contracts, `boat_device` and `boat_wifi`, `examples/boat_device_min` and `mqtt_p2p`, the site), is its own repository: [xid-network](https://github.com/linyao0177/xid-network). It uses this one as a git submodule.
 
 ## Testing
 
@@ -230,7 +230,7 @@ Issues and pull requests are welcome, especially:
 - smaller and faster crypto paths (an IRAM BLAKE2b, fixed-point BBR)
 - a phone app over BLE
 
-Please run `test_vectors` and the desktop interop tests before sending protocol changes. If a change touches wire formats, regenerate the vectors with `tools/host/gen-vectors.js`.
+Please run `test_vectors` and the desktop interop tests before sending protocol changes. If a change touches wire formats, regenerate the vectors with `tools/host/gen-vectors.js`. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest; report security problems privately ([SECURITY.md](SECURITY.md)).
 
 ## Acknowledgements and license
 

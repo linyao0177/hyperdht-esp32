@@ -3,7 +3,8 @@
 
 Usage: python tools/module_mqtt_test.py <serial port>
 
-Starts an MQTT node (packages/boat-mqtt-node) on this computer under a fresh
+Starts an MQTT node (boat-mqtt-node, from a checkout of xid-network next to
+this one, or $XID_NETWORK) on this computer under a fresh
 network name, and an app on it (tools/host/mqtt-peer.mjs). The module finds
 the node by network name over the public HyperDHT, publishes, signs, receives
 a command, is refused when it writes under another key, reconnects, and
@@ -23,6 +24,10 @@ ROOT = os.path.join(os.path.dirname(__file__), '..')
 results = []
 procs = []
 
+
+# boat-mqtt-node lives in xid-network (https://github.com/linyao0177/xid-network): a checkout next to this one,
+# or wherever XID_NETWORK says
+XID = os.environ.get('XID_NETWORK') or os.path.abspath(os.path.join(ROOT, '..', 'xid-network'))
 
 def check(name, ok, detail=''):
     results.append(bool(ok))
@@ -56,7 +61,7 @@ def msg_event(m, topic_end, timeout=30):
 def main(port):
     tmp = tempfile.mkdtemp(prefix='module-mqtt-')
     network = f'boat-mqtt-modtest-{os.getpid()}'
-    node = spawn(['node', 'bin/boat-mqtt-node.js', '--key', os.path.join(tmp, 'node.json'), '--network', network], os.path.join(ROOT, 'packages', 'boat-mqtt-node'))
+    node = spawn(['node', 'bin/boat-mqtt-node.js', '--key', os.path.join(tmp, 'node.json'), '--network', network], os.path.join(XID, 'packages', 'boat-mqtt-node'))
     node_key = line_from(node, r'node ([0-9a-f]{64})').group(1)
     line_from(node, r'announced')
     print(f'node {node_key[:16]}... on network {network}')

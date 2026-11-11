@@ -8,7 +8,8 @@
 // them (QoS 1), printing PEER|sent.
 
 import readline from 'readline'
-import { connect, SignedInbox } from '../../packages/boat-mqtt-node/index.js'
+// boat-mqtt-node is in xid-network (https://github.com/linyao0177/xid-network): a checkout next to this one
+import { connect, SignedInbox } from '../../../xid-network/packages/boat-mqtt-node/index.js'
 
 const [nodeKey, moduleKey] = process.argv.slice(2)
 const out = (line) => console.log('PEER|' + line)

@@ -19,3 +19,6 @@ node_modules/
 secure_boot_signing_key.pem
 *.pem
 .concord/
+
+# release output (tools/release)
+dist/

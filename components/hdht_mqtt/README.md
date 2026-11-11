@@ -27,7 +27,7 @@ The rest is esp-mqtt as usual: `esp_mqtt_client_publish`, `esp_mqtt_client_subsc
         4. It does this again every 10 minutes, and moves to the verifiers an agreed list names, keeping them in NVS.
     - The device needs no chain, and one verifier alone cannot steer it.
     - Lower down: `hdht_mqtt_nodelist_fetch` and `hdht_mqtt_transport_set_nodes`.
-    - Verifier nodes publish the list (`packages/boat-registry`, `lib/nodelist.js`). The decoding and tally in `nodelist.c` are checked against the JS on the desktop (`test/test_nodelist.c`).
+    - Verifier nodes publish the list ([`boat-registry`](https://github.com/linyao0177/xid-network/tree/main/packages/boat-registry) in xid-network, `lib/nodelist.js`). The decoding and tally in `nodelist.c` are checked against the JS on the desktop (`test/test_nodelist.c`).
 - **Status.** `hdht_mqtt_get_info` reports the node, how many nodes the lookup found, lookup and connect times, whether the stream is relayed, and the last error.
 - **Relays.** A device behind a random NAT uses `hdht_set_relay` as with any hdht connection; the transport needs nothing more.
 - **Never call esp-mqtt from the hdht task.** esp-mqtt's task holds its API lock while it waits for the hdht task (during a connect, for one), so such a call waits for itself until the connect times out. Hand esp-mqtt calls to another task, as `examples/uart_module` (`main/mqtt.c`) and `examples/boat_mer` do.
@@ -40,4 +40,4 @@ A node checks who publishes, but a node is anyone's machine: it, or a bridge, co
 
 `hdht_mqtt_receipt_open` and `hdht_mqtt_receipt_check` read a node's signed receipt: what it says it got from the device, compared with what the device sent. A receipt that names a sequence number the device never sent is the node's signed word against itself.
 
-See [`examples/mqtt_p2p`](../../examples/mqtt_p2p) for a device that publishes telemetry and answers commands, and the measurements.
+See [`examples/mqtt_p2p`](https://github.com/linyao0177/xid-network/tree/main/examples/mqtt_p2p) (in xid-network) for a device that publishes telemetry and answers commands, and the measurements.

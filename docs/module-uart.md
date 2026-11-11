@@ -124,7 +124,7 @@ Each takes 1.24 s on the C3, one at a time and below the network's priority. The
 
 ### MQTT
 
-Since 0.7.0 the module is also an MQTT client of nodes that anyone can run ([`packages/boat-mqtt-node`](../packages/boat-mqtt-node)), over HyperDHT ([`components/hdht_mqtt`](../components/hdht_mqtt)). It logs in with its DID key, so there is no broker address, password or certificate. Only the module may publish under `d/<its key>/`, and `~/` in a topic stands for that prefix. A message to the module arrives under `d/<sender key>/to/<its key>/…`, so the host learns the sender from the topic. Topics in commands may not contain commas. These commands are answered by a task of their own, so their `OK` can take a moment.
+Since 0.7.0 the module is also an MQTT client of nodes that anyone can run ([`boat-mqtt-node`](https://github.com/linyao0177/xid-network/tree/main/packages/boat-mqtt-node), in xid-network), over HyperDHT ([`components/hdht_mqtt`](../components/hdht_mqtt)). It logs in with its DID key, so there is no broker address, password or certificate. Only the module may publish under `d/<its key>/`, and `~/` in a topic stands for that prefix. A message to the module arrives under `d/<sender key>/to/<its key>/…`, so the host learns the sender from the topic. Topics in commands may not contain commas. These commands are answered by a task of their own, so their `OK` can take a moment.
 
 | Command | Response | Notes |
 |---|---|---|

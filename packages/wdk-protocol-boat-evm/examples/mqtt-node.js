@@ -1,4 +1,4 @@
-// An MQTT node that charges per message (packages/boat-mqtt-node) and settles
+// An MQTT node that charges per message (boat-mqtt-node, in xid-network) and settles
 // what devices pay into a WDK EVM account, in Multicall3 batches.
 //
 // Devices (examples/boat_mer with CONFIG_MER_MQTT_NODE) read the node's terms
@@ -18,8 +18,9 @@ import fs from 'fs'
 import WDK from '@tetherto/wdk'
 import WalletManagerEvm from '@tetherto/wdk-wallet-evm'
 import BoatProtocolEvm, { registerBoat } from '../index.js'
-import { createNode } from '../../boat-mqtt-node/index.js'
-import { loadKeyPair } from '../../boat-mqtt-node/lib/keyfile.js'
+// boat-mqtt-node is in xid-network (https://github.com/linyao0177/xid-network): a checkout next to this one
+import { createNode } from '../../../../xid-network/packages/boat-mqtt-node/index.js'
+import { loadKeyPair } from '../../../../xid-network/packages/boat-mqtt-node/lib/keyfile.js'
 
 const args = process.argv.slice(2)
 const opt = (name, fallback) => {
