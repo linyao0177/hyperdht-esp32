@@ -26,7 +26,7 @@ The rest is esp-mqtt as usual: `esp_mqtt_client_publish`, `esp_mqtt_client_subsc
         3. It hands those nodes to the transport, which then dials them with no lookup.
         4. It does this again every 10 minutes, and moves to the verifiers an agreed list names, keeping them in NVS.
     - The device needs no chain, and one verifier alone cannot steer it.
-    - Lower down: `hdht_mqtt_nodelist_fetch` and `hdht_mqtt_transport_set_nodes`.
+    - Lower down: `hdht_mqtt_nodelist_fetch`, `hdht_mqtt_transport_set_nodes` and `hdht_mqtt_transport_prefer` (a listed node to dial first).
     - Verifier nodes publish the list ([`boat-registry`](https://github.com/linyao0177/xid-network/tree/main/packages/boat-registry) in xid-network, `lib/nodelist.js`). The decoding and tally in `nodelist.c` are checked against the JS on the desktop (`test/test_nodelist.c`).
 - **Status.** `hdht_mqtt_get_info` reports the node, how many nodes the lookup found, lookup and connect times, whether the stream is relayed, and the last error.
 - **Relays.** A device behind a random NAT uses `hdht_set_relay` as with any hdht connection; the transport needs nothing more.

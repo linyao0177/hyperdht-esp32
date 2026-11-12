@@ -26,6 +26,7 @@ static const char *TAG = "hdht_mqtt";
 
 #define CLOSE_GRACE_MS 2000 // after hdht_stream_end, destroy the stream if it has not closed
 #define CLOSE_WAIT_MS  (CLOSE_GRACE_MS + 1000)
+#define PREFER_AGAIN_MS (10 * 60 * 1000) // on another node than the preferred one: try it again after this
 #define WRITE_CHUNK    1024 // one encrypted message on the stream
 
 // event bits, set on the hdht task
@@ -76,6 +77,9 @@ typedef struct {
   bool has_lost;
   uint8_t listed[HDHT_MQTT_NODELIST_PAGE][32]; // hdht_mqtt_transport_set_nodes
   size_t listed_len;
+  uint8_t preferred[32]; // hdht_mqtt_transport_prefer
+  bool has_preferred;
+  int64_t off_preferred_us; // open to another node since then, the preferred one a candidate; 0: no
   bool destroy_pending;
   bool free_on_destroyed; // destroyed from the hdht task itself: nobody waits
   uint8_t chunk[WRITE_CHUNK];
@@ -145,6 +149,10 @@ on_open (hdht_stream_t *s) {
   c->info.relayed = s->relay != NULL;
   c->info.connect_ms = (uint32_t) ((esp_timer_get_time() - c->started_us) / 1000);
   memcpy(c->info.node, s->remote_public_key, 32);
+  c->off_preferred_us = 0;
+  for (size_t i = 0; c->has_preferred && memcmp(s->remote_public_key, c->preferred, 32) != 0 && i < c->candidates_len; i++) {
+    if (memcmp(c->candidates[i], c->preferred, 32) == 0) c->off_preferred_us = esp_timer_get_time();
+  }
   ESP_LOGI(TAG, "open to node %02x%02x%02x%02x... in %u ms%s", s->remote_public_key[0], s->remote_public_key[1], s->remote_public_key[2], s->remote_public_key[3], (unsigned) c->info.connect_ms, c->info.relayed ? " (relayed)" : "");
   xEventGroupSetBits(c->ev, EV_OPEN);
 }
@@ -198,7 +206,8 @@ dial_next (ctx_t *c) {
   become_idle(c, HDHT_CONNECT_EPEER_NOT_FOUND);
 }
 
-// random order, spreading devices over nodes; the node we just lost goes last
+// random order, spreading devices over nodes; the node we just lost goes
+// last, and the preferred one (when it is a candidate and not just lost) first
 static void
 order_candidates (ctx_t *c) {
   for (size_t i = c->candidates_len; i > 1; i--) {
@@ -214,6 +223,13 @@ order_candidates (ctx_t *c) {
     memcpy(tmp, c->candidates[i], 32);
     memmove(c->candidates[i], c->candidates[i + 1], (c->candidates_len - i - 1) * 32);
     memcpy(c->candidates[c->candidates_len - 1], tmp, 32);
+    break;
+  }
+  if (!c->has_preferred || (c->has_lost && memcmp(c->preferred, c->lost, 32) == 0)) return;
+  for (size_t i = 1; i < c->candidates_len; i++) {
+    if (memcmp(c->candidates[i], c->preferred, 32) != 0) continue;
+    memmove(c->candidates[1], c->candidates[0], i * 32);
+    memcpy(c->candidates[0], c->preferred, 32);
     break;
   }
 }
@@ -304,6 +320,14 @@ on_command (uv_async_t *h) {
   ctx_t *c = h->data;
   uint32_t cmd = __atomic_exchange_n(&c->cmd, 0, __ATOMIC_SEQ_CST);
   if (cmd & CMD_WRITE) flush_tx(c);
+  // on another node than the preferred one (it failed when dialed): leave
+  // it now and then (esp-mqtt writes at least once a keepalive), so the
+  // next connect tries the preferred one first again
+  if (c->state == S_OPEN && c->off_preferred_us && esp_timer_get_time() - c->off_preferred_us > PREFER_AGAIN_MS * 1000LL) {
+    ESP_LOGI(TAG, "back to the preferred node");
+    c->off_preferred_us = 0;
+    abort_connection(c);
+  }
   if (cmd & (CMD_CLOSE | CMD_DESTROY)) abort_connection(c);
   if (cmd & CMD_DESTROY) {
     if (c->state == S_IDLE) close_handles(c);
@@ -511,6 +535,13 @@ hdht_mqtt_transport_set_nodes (esp_transport_handle_t t, const uint8_t (*nodes)[
   if (n > HDHT_MQTT_NODELIST_PAGE) n = HDHT_MQTT_NODELIST_PAGE;
   if (n) memcpy(c->listed, nodes, n * 32);
   c->listed_len = n;
+}
+
+void
+hdht_mqtt_transport_prefer (esp_transport_handle_t t, const uint8_t key[32]) {
+  ctx_t *c = ctx_of(t);
+  if (key) memcpy(c->preferred, key, 32);
+  c->has_preferred = key != NULL;
 }
 
 // ---- the node list: the trusted verifiers' records, tallied ----

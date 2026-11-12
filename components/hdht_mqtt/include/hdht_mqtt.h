@@ -75,6 +75,15 @@ hdht_mqtt_get_info (esp_transport_handle_t t, hdht_mqtt_info_t *info);
 void
 hdht_mqtt_transport_set_nodes (esp_transport_handle_t t, const uint8_t (*nodes)[32], size_t n);
 
+// Dial this node first whenever it is among the nodes to dial (the node list
+// or a lookup's), unless it is the one just lost; NULL: none. On another node
+// because this one failed, it leaves that node after 10 minutes to try this
+// one again. It never adds a node: a device near one of the listed nodes
+// keeps its round trips short. Call on the hdht task; it applies from the
+// next connect.
+void
+hdht_mqtt_transport_prefer (esp_transport_handle_t t, const uint8_t key[32]);
+
 typedef void (*hdht_mqtt_nodelist_cb)(int status, const hdht_mqtt_nodelist_t *list, size_t votes, void *data);
 
 // Reads the records of the n trusted verify keys (n <= HDHT_MQTT_NODELIST_VERIFIERS),
